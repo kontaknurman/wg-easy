@@ -291,17 +291,14 @@ new Vue({
         timezone: tz,
         days,
       };
-      this.scheduleAllTemplate = { active: true, start: '08:00', end: '17:00' };
+      this.scheduleAllTemplate = { start: '08:00', end: '17:00' };
     },
-    applyAllDays() {
+    applyAllDaysHours() {
       if (!this.scheduleEdit) return;
       const t = this.scheduleAllTemplate;
       for (const k of Object.keys(this.scheduleEdit.days)) {
-        this.scheduleEdit.days[k] = {
-          active: !!t.active,
-          start: t.start,
-          end: t.end,
-        };
+        this.scheduleEdit.days[k].start = t.start;
+        this.scheduleEdit.days[k].end = t.end;
       }
     },
     saveSchedule() {
@@ -315,6 +312,22 @@ new Vue({
         })
         .catch(err => alert(err.message || err.toString()))
         .finally(() => this.refresh().catch(console.error));
+    },
+  },
+  computed: {
+    allDaysActive: {
+      get() {
+        if (!this.scheduleEdit || !this.scheduleEdit.days) return false;
+        const days = Object.values(this.scheduleEdit.days);
+        if (days.length === 0) return false;
+        return days.every(d => d && d.active);
+      },
+      set(value) {
+        if (!this.scheduleEdit || !this.scheduleEdit.days) return;
+        for (const k of Object.keys(this.scheduleEdit.days)) {
+          this.scheduleEdit.days[k].active = !!value;
+        }
+      },
     },
   },
   filters: {
