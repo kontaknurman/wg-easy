@@ -117,4 +117,12 @@ class API {
     });
   }
 
+  async updateClientSchedule({ clientId, schedule }) {
+    return this.call({
+      method: 'put',
+      path: `/wireguard/client/${clientId}/schedule/`,
+      body: { schedule },
+    });
+  }
+
 }

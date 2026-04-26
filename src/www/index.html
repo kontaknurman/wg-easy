@@ -243,6 +243,21 @@
                       <div class="rounded-full w-4 h-4 m-1 bg-white"></div>
                     </div>
 
+                    <!-- Schedule -->
+                    <button
+                      class="align-middle bg-gray-100 hover:bg-red-800 hover:text-white p-2 rounded transition relative"
+                      :title="client.schedule && client.schedule.enabled ? (client.scheduleActive ? 'Schedule active now' : 'Outside scheduled hours') : 'Schedule'"
+                      @click="openSchedule(client)">
+                      <svg class="w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"
+                        stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                          d="M12 8v4l3 2m6-2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      <span v-if="client.schedule && client.schedule.enabled"
+                        :class="client.scheduleActive ? 'bg-green-500' : 'bg-gray-400'"
+                        class="absolute top-1 right-1 w-2 h-2 rounded-full"></span>
+                    </button>
+
                     <!-- Show QR-->
                     <button class="align-middle bg-gray-100 hover:bg-red-800 hover:text-white p-2 rounded transition"
                       title="Show QR Code" @click="qrcode = `./api/wireguard/client/${client.id}/qrcode.svg`">
@@ -455,6 +470,111 @@
                 </button>
                 <button type="button" @click="clientDelete = null"
                   class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm">
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Schedule Dialog -->
+        <div v-if="clientSchedule" class="fixed z-10 inset-0 overflow-y-auto">
+          <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+            <div class="fixed inset-0 transition-opacity" aria-hidden="true">
+              <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
+            </div>
+            <span class="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
+            <div
+              class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full"
+              role="dialog" aria-modal="true" aria-labelledby="schedule-headline">
+              <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+                <div class="sm:flex sm:items-start">
+                  <div
+                    class="mx-auto flex-shrink-0 flex items-center justify-center h-12 w-12 rounded-full bg-red-800 sm:mx-0 sm:h-10 sm:w-10">
+                    <svg class="h-6 w-6 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"
+                      stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M12 8v4l3 2m6-2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  </div>
+                  <div class="flex-grow mt-3 sm:mt-0 sm:ml-4 w-full">
+                    <h3 class="text-lg leading-6 font-medium text-gray-900" id="schedule-headline">
+                      Schedule for {{clientSchedule.name}}
+                    </h3>
+                    <div class="mt-3 space-y-3">
+                      <div class="flex items-center justify-between">
+                        <label class="text-sm text-gray-700 font-medium">Enable schedule</label>
+                        <div @click="scheduleEdit.enabled = !scheduleEdit.enabled"
+                          :class="scheduleEdit.enabled ? 'bg-red-800' : 'bg-gray-200'"
+                          class="inline-block align-middle rounded-full w-10 h-6 cursor-pointer transition-all">
+                          <div :class="scheduleEdit.enabled ? 'ml-5' : ''"
+                            class="rounded-full w-4 h-4 m-1 bg-white transition-all"></div>
+                        </div>
+                      </div>
+                      <p class="text-xs text-gray-500">When enabled, the client can connect only during the active hours
+                        below. Outside the window the peer is removed from WireGuard.</p>
+
+                      <div>
+                        <label class="text-sm text-gray-700 font-medium block mb-1">Timezone</label>
+                        <select v-model="scheduleEdit.timezone"
+                          class="w-full rounded p-2 border-2 border-gray-100 focus:border-gray-200 outline-none text-sm">
+                          <option v-for="tz in timezoneOptions" :key="tz" :value="tz">{{tz}}</option>
+                        </select>
+                      </div>
+
+                      <div class="border-t pt-3">
+                        <div class="flex items-center justify-between mb-2">
+                          <span class="text-sm font-medium text-gray-700">Apply to all days</span>
+                          <button type="button" @click="applyAllDays()"
+                            class="text-xs px-3 py-1 rounded border border-gray-200 hover:bg-gray-50">Apply</button>
+                        </div>
+                        <div class="grid grid-cols-1 gap-1 mb-2 text-xs text-gray-500">
+                          Use the row below to copy active state and start/end to every day.
+                        </div>
+                        <div class="flex items-center space-x-2 mb-3 pb-3 border-b">
+                          <div @click="scheduleAllTemplate.active = !scheduleAllTemplate.active"
+                            :class="scheduleAllTemplate.active ? 'bg-red-800' : 'bg-gray-200'"
+                            class="inline-block align-middle rounded-full w-10 h-6 cursor-pointer transition-all flex-shrink-0">
+                            <div :class="scheduleAllTemplate.active ? 'ml-5' : ''"
+                              class="rounded-full w-4 h-4 m-1 bg-white transition-all"></div>
+                          </div>
+                          <span class="text-sm w-24 text-gray-700">All days</span>
+                          <input type="time" v-model="scheduleAllTemplate.start"
+                            class="rounded p-1 border-2 border-gray-100 focus:border-gray-200 outline-none text-sm w-24" />
+                          <span class="text-gray-400">–</span>
+                          <input type="time" v-model="scheduleAllTemplate.end"
+                            class="rounded p-1 border-2 border-gray-100 focus:border-gray-200 outline-none text-sm w-24" />
+                        </div>
+
+                        <div v-for="day in scheduleDays" :key="day.key"
+                          class="flex items-center space-x-2 mb-2">
+                          <div @click="scheduleEdit.days[day.key].active = !scheduleEdit.days[day.key].active"
+                            :class="scheduleEdit.days[day.key].active ? 'bg-red-800' : 'bg-gray-200'"
+                            class="inline-block align-middle rounded-full w-10 h-6 cursor-pointer transition-all flex-shrink-0">
+                            <div :class="scheduleEdit.days[day.key].active ? 'ml-5' : ''"
+                              class="rounded-full w-4 h-4 m-1 bg-white transition-all"></div>
+                          </div>
+                          <span class="text-sm w-24 text-gray-700">{{day.label}}</span>
+                          <input type="time" v-model="scheduleEdit.days[day.key].start"
+                            :disabled="!scheduleEdit.days[day.key].active"
+                            class="rounded p-1 border-2 border-gray-100 focus:border-gray-200 outline-none text-sm w-24 disabled:opacity-50" />
+                          <span class="text-gray-400">–</span>
+                          <input type="time" v-model="scheduleEdit.days[day.key].end"
+                            :disabled="!scheduleEdit.days[day.key].active"
+                            class="rounded p-1 border-2 border-gray-100 focus:border-gray-200 outline-none text-sm w-24 disabled:opacity-50" />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
+                <button type="button" @click="saveSchedule()"
+                  class="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-red-800 text-base font-medium text-white hover:bg-red-700 focus:outline-none sm:ml-3 sm:w-auto sm:text-sm">
+                  Save
+                </button>
+                <button type="button" @click="clientSchedule = null"
+                  class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm">
                   Cancel
                 </button>
               </div>

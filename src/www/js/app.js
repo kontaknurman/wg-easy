@@ -40,6 +40,34 @@ new Vue({
     clientEditNameId: null,
     clientEditAddress: null,
     clientEditAddressId: null,
+    clientSchedule: null,
+    scheduleEdit: null,
+    scheduleAllTemplate: { active: true, start: '08:00', end: '17:00' },
+    scheduleDays: [
+      { key: 'monday', label: 'Monday' },
+      { key: 'tuesday', label: 'Tuesday' },
+      { key: 'wednesday', label: 'Wednesday' },
+      { key: 'thursday', label: 'Thursday' },
+      { key: 'friday', label: 'Friday' },
+      { key: 'saturday', label: 'Saturday' },
+      { key: 'sunday', label: 'Sunday' },
+    ],
+    timezoneOptions: (() => {
+      try {
+        if (typeof Intl.supportedValuesOf === 'function') {
+          return Intl.supportedValuesOf('timeZone');
+        }
+      } catch (err) { /* ignore */ }
+      return [
+        'UTC',
+        'Asia/Jakarta', 'Asia/Makassar', 'Asia/Jayapura',
+        'Asia/Singapore', 'Asia/Kuala_Lumpur', 'Asia/Bangkok', 'Asia/Hong_Kong', 'Asia/Tokyo', 'Asia/Seoul', 'Asia/Manila',
+        'Asia/Kolkata', 'Asia/Dubai', 'Asia/Shanghai', 'Asia/Taipei',
+        'Europe/London', 'Europe/Paris', 'Europe/Berlin', 'Europe/Amsterdam', 'Europe/Madrid', 'Europe/Moscow',
+        'America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles', 'America/Sao_Paulo',
+        'Australia/Sydney', 'Australia/Perth', 'Pacific/Auckland',
+      ];
+    })(),
     qrcode: null,
 
     currentRelease: null,
@@ -236,6 +264,55 @@ new Vue({
     },
     updateClientAddress(client, address) {
       this.api.updateClientAddress({ clientId: client.id, address })
+        .catch(err => alert(err.message || err.toString()))
+        .finally(() => this.refresh().catch(console.error));
+    },
+    openSchedule(client) {
+      this.clientSchedule = client;
+      const days = {};
+      const baseDays = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+      for (const k of baseDays) {
+        const d = client.schedule && client.schedule.days && client.schedule.days[k];
+        days[k] = {
+          active: d ? !!d.active : false,
+          start: d && d.start ? d.start : '00:00',
+          end: d && d.end ? d.end : '23:59',
+        };
+      }
+      let tz = (client.schedule && client.schedule.timezone) || 'UTC';
+      if (this.timezoneOptions.indexOf(tz) === -1) {
+        try {
+          const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+          if (this.timezoneOptions.indexOf(browserTz) !== -1) tz = browserTz;
+        } catch (err) { /* ignore */ }
+      }
+      this.scheduleEdit = {
+        enabled: !!(client.schedule && client.schedule.enabled),
+        timezone: tz,
+        days,
+      };
+      this.scheduleAllTemplate = { active: true, start: '08:00', end: '17:00' };
+    },
+    applyAllDays() {
+      if (!this.scheduleEdit) return;
+      const t = this.scheduleAllTemplate;
+      for (const k of Object.keys(this.scheduleEdit.days)) {
+        this.scheduleEdit.days[k] = {
+          active: !!t.active,
+          start: t.start,
+          end: t.end,
+        };
+      }
+    },
+    saveSchedule() {
+      if (!this.clientSchedule || !this.scheduleEdit) return;
+      const clientId = this.clientSchedule.id;
+      const schedule = JSON.parse(JSON.stringify(this.scheduleEdit));
+      this.api.updateClientSchedule({ clientId, schedule })
+        .then(() => {
+          this.clientSchedule = null;
+          this.scheduleEdit = null;
+        })
         .catch(err => alert(err.message || err.toString()))
         .finally(() => this.refresh().catch(console.error));
     },

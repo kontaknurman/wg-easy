@@ -134,10 +134,17 @@ module.exports = class Server {
         const { address } = req.body;
         return WireGuard.updateClientAddress({ clientId, address });
       }))
+      .put('/api/wireguard/client/:clientId/schedule', Util.promisify(async req => {
+        const { clientId } = req.params;
+        const { schedule } = req.body;
+        return WireGuard.updateClientSchedule({ clientId, schedule });
+      }))
 
       .listen(PORT, () => {
         debug(`Listening on http://0.0.0.0:${PORT}`);
       });
+
+    WireGuard.startScheduler();
   }
 
 };
