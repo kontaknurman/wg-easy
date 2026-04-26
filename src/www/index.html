@@ -523,27 +523,26 @@
                       </div>
 
                       <div class="border-t pt-3">
-                        <div class="flex items-center justify-between mb-2">
-                          <span class="text-sm font-medium text-gray-700">Apply to all days</span>
-                          <button type="button" @click="applyAllDays()"
-                            class="text-xs px-3 py-1 rounded border border-gray-200 hover:bg-gray-50">Apply</button>
-                        </div>
-                        <div class="grid grid-cols-1 gap-1 mb-2 text-xs text-gray-500">
-                          Use the row below to copy active state and start/end to every day.
-                        </div>
-                        <div class="flex items-center space-x-2 mb-3 pb-3 border-b">
-                          <div @click="scheduleAllTemplate.active = !scheduleAllTemplate.active"
-                            :class="scheduleAllTemplate.active ? 'bg-red-800' : 'bg-gray-200'"
+                        <div class="flex items-center space-x-2 mb-2">
+                          <div @click="allDaysActive = !allDaysActive"
+                            :class="allDaysActive ? 'bg-red-800' : 'bg-gray-200'"
                             class="inline-block align-middle rounded-full w-10 h-6 cursor-pointer transition-all flex-shrink-0">
-                            <div :class="scheduleAllTemplate.active ? 'ml-5' : ''"
+                            <div :class="allDaysActive ? 'ml-5' : ''"
                               class="rounded-full w-4 h-4 m-1 bg-white transition-all"></div>
                           </div>
-                          <span class="text-sm w-24 text-gray-700">All days</span>
+                          <span class="text-sm w-24 text-gray-700 font-medium">All days</span>
+                          <span class="text-xs text-gray-500 flex-grow">Toggle activates/deactivates every day at
+                            once.</span>
+                        </div>
+                        <div class="flex items-center space-x-2 mb-3 pb-3 border-b">
+                          <span class="text-sm w-24 text-gray-500 ml-12">Set hours</span>
                           <input type="time" v-model="scheduleAllTemplate.start"
                             class="rounded p-1 border-2 border-gray-100 focus:border-gray-200 outline-none text-sm w-24" />
                           <span class="text-gray-400">–</span>
                           <input type="time" v-model="scheduleAllTemplate.end"
                             class="rounded p-1 border-2 border-gray-100 focus:border-gray-200 outline-none text-sm w-24" />
+                          <button type="button" @click="applyAllDaysHours()"
+                            class="text-xs px-3 py-1 rounded border border-gray-200 hover:bg-gray-50">Apply</button>
                         </div>
 
                         <div v-for="day in scheduleDays" :key="day.key"
