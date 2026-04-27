@@ -1,3 +1,19 @@
 /config
 /wg0.conf
 /wg0.json
+
+# Node
+node_modules/
+.npm/
+
+# Vite
+dist/
+.vite/
+
+# Editor
+.DS_Store
+.vscode/
+.idea/
+
+# Logs
+*.log

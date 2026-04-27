@@ -144,6 +144,13 @@ module.exports = class Server {
         return WireGuard.updateClientSchedule({ clientId, schedule });
       }))
 
+      // SPA fallback: any non-API GET that isn't a static file falls back to index.html
+      // so vue-router (history mode) can handle /docs, /login, etc.
+      .get(/^\/(?!api\/).*/, (req, res, next) => {
+        if (req.method !== 'GET') return next();
+        return res.sendFile(path.join(__dirname, '..', 'www', 'index.html'));
+      })
+
       .listen(PORT, () => {
         debug(`Listening on http://0.0.0.0:${PORT}`);
       });

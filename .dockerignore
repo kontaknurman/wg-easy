@@ -1,0 +1,19 @@
+# Frontend source - we ship only the built bundle in src/www/
+src/www-src/
+
+# Node modules from local development
+**/node_modules/
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
+
+# Local config & secrets
+/config
+/wg0.conf
+/wg0.json
+
+# Git
+.git/
+.gitignore
