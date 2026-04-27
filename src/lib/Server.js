@@ -9,6 +9,7 @@ const debug = require('debug')('Server');
 const Util = require('./Util');
 const ServerError = require('./ServerError');
 const WireGuard = require('../services/WireGuard');
+const openapi = require('./openapi');
 
 const {
   PORT,
@@ -33,6 +34,9 @@ module.exports = class Server {
       .get('/api/release', (Util.promisify(async () => {
         return RELEASE;
       })))
+      .get('/api/openapi.json', Util.promisify(async () => {
+        return openapi;
+      }))
 
       // Authentication
       .get('/api/session', Util.promisify(async req => {

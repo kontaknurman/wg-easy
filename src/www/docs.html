@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <title>wg-easy · API Documentation</title>
+  <link href="./css/vendor/tailwind.min.css" rel="stylesheet">
+  <link rel="icon" type="image/png" href="./img/favicon.png">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+</head>
+
+<style>
+  .method {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-weight: 600;
+    font-size: 0.7rem;
+    letter-spacing: 0.05em;
+    padding: 0.15rem 0.5rem;
+    border-radius: 0.25rem;
+    color: #fff;
+    display: inline-block;
+    min-width: 3.5rem;
+    text-align: center;
+  }
+  .method-get { background: #2563eb; }
+  .method-post { background: #16a34a; }
+  .method-put { background: #ca8a04; }
+  .method-delete { background: #b91c1c; }
+  pre.code {
+    background: #1f2937;
+    color: #f3f4f6;
+    padding: 1rem;
+    border-radius: 0.375rem;
+    overflow-x: auto;
+    font-size: 0.8rem;
+    line-height: 1.4;
+  }
+  code.inline {
+    background: #f3f4f6;
+    padding: 0.1rem 0.35rem;
+    border-radius: 0.25rem;
+    font-size: 0.85em;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  .endpoint {
+    scroll-margin-top: 1rem;
+  }
+  table.params {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+  }
+  table.params th, table.params td {
+    text-align: left;
+    padding: 0.4rem 0.6rem;
+    border-bottom: 1px solid #e5e7eb;
+    vertical-align: top;
+  }
+  table.params th {
+    background: #f9fafb;
+    font-weight: 600;
+    color: #374151;
+  }
+</style>
+
+<body class="bg-gray-50 text-gray-800">
+
+  <div class="container mx-auto max-w-5xl px-4 py-8">
+
+    <header class="mb-10 flex items-center justify-between">
+      <div>
+        <h1 class="text-4xl font-medium">
+          <img src="./img/logo.png" width="32" class="inline align-middle" />
+          <span class="align-middle">wg-easy API</span>
+        </h1>
+        <p class="text-gray-500 mt-2 text-sm">
+          REST API reference. Machine-readable spec at
+          <a href="./api/openapi.json" class="text-red-800 hover:underline"><code class="inline">/api/openapi.json</code></a>.
+        </p>
+      </div>
+      <a href="./" class="text-sm text-gray-500 hover:text-red-800 hover:underline">← Back to dashboard</a>
+    </header>
+
+    <div class="grid grid-cols-12 gap-6">
+
+      <!-- Sidebar -->
+      <nav class="col-span-12 md:col-span-3">
+        <div class="bg-white rounded-lg shadow-sm p-4 md:sticky md:top-4 text-sm">
+          <p class="font-semibold text-gray-700 mb-2">Contents</p>
+          <ul class="space-y-1">
+            <li><a href="#overview" class="text-gray-600 hover:text-red-800">Overview</a></li>
+            <li><a href="#auth" class="text-gray-600 hover:text-red-800">Authentication</a></li>
+            <li class="font-medium text-gray-700 mt-3">Meta</li>
+            <li class="ml-2"><a href="#meta-release" class="text-gray-600 hover:text-red-800">GET /api/release</a></li>
+            <li class="ml-2"><a href="#meta-openapi" class="text-gray-600 hover:text-red-800">GET /api/openapi.json</a></li>
+            <li class="font-medium text-gray-700 mt-3">Session</li>
+            <li class="ml-2"><a href="#session-get" class="text-gray-600 hover:text-red-800">GET /api/session</a></li>
+            <li class="ml-2"><a href="#session-post" class="text-gray-600 hover:text-red-800">POST /api/session</a></li>
+            <li class="ml-2"><a href="#session-delete" class="text-gray-600 hover:text-red-800">DELETE /api/session</a></li>
+            <li class="font-medium text-gray-700 mt-3">Clients</li>
+            <li class="ml-2"><a href="#clients-list" class="text-gray-600 hover:text-red-800">GET /client</a></li>
+            <li class="ml-2"><a href="#clients-create" class="text-gray-600 hover:text-red-800">POST /client</a></li>
+            <li class="ml-2"><a href="#clients-delete" class="text-gray-600 hover:text-red-800">DELETE /client/:id</a></li>
+            <li class="ml-2"><a href="#clients-enable" class="text-gray-600 hover:text-red-800">POST /client/:id/enable</a></li>
+            <li class="ml-2"><a href="#clients-disable" class="text-gray-600 hover:text-red-800">POST /client/:id/disable</a></li>
+            <li class="ml-2"><a href="#clients-name" class="text-gray-600 hover:text-red-800">PUT /client/:id/name</a></li>
+            <li class="ml-2"><a href="#clients-address" class="text-gray-600 hover:text-red-800">PUT /client/:id/address</a></li>
+            <li class="ml-2"><a href="#clients-qr" class="text-gray-600 hover:text-red-800">GET /client/:id/qrcode.svg</a></li>
+            <li class="ml-2"><a href="#clients-conf" class="text-gray-600 hover:text-red-800">GET /client/:id/configuration</a></li>
+            <li class="font-medium text-gray-700 mt-3">Schedule</li>
+            <li class="ml-2"><a href="#schedule-put" class="text-gray-600 hover:text-red-800">PUT /client/:id/schedule</a></li>
+            <li class="font-medium text-gray-700 mt-3">Schemas</li>
+            <li class="ml-2"><a href="#schema-client" class="text-gray-600 hover:text-red-800">Client</a></li>
+            <li class="ml-2"><a href="#schema-schedule" class="text-gray-600 hover:text-red-800">Schedule</a></li>
+          </ul>
+        </div>
+      </nav>
+
+      <main class="col-span-12 md:col-span-9 space-y-8">
+
+        <section id="overview" class="bg-white rounded-lg shadow-sm p-6">
+          <h2 class="text-2xl font-medium mb-3">Overview</h2>
+          <p class="text-sm text-gray-700 leading-relaxed">
+            wg-easy exposes a small REST API for managing WireGuard peers. All paths are served from the same origin
+            as the dashboard. JSON is used for request/response bodies; binary endpoints (QR, .conf download) return
+            the appropriate <code class="inline">Content-Type</code>.
+          </p>
+          <p class="text-sm text-gray-700 leading-relaxed mt-3">
+            All <code class="inline">/api/wireguard/**</code> endpoints require an authenticated session when the
+            server was started with the <code class="inline">PASSWORD</code> environment variable. When
+            <code class="inline">PASSWORD</code> is unset, the API is open.
+          </p>
+        </section>
+
+        <section id="auth" class="bg-white rounded-lg shadow-sm p-6">
+          <h2 class="text-2xl font-medium mb-3">Authentication</h2>
+          <p class="text-sm text-gray-700">
+            Auth is cookie-based. <code class="inline">POST /api/session</code> with the password sets a
+            <code class="inline">connect.sid</code> cookie that subsequent requests must send. From a browser,
+            cookies are managed automatically. From <code class="inline">curl</code>, use a cookie jar:
+          </p>
+          <pre class="code mt-3"># Login (saves cookie)
+curl -c cookies.txt -X POST http://localhost:51821/api/session \
+  -H "Content-Type: application/json" \
+  -d '{"password":"YOURPASS"}'
+
+# Use the saved cookie for subsequent calls
+curl -b cookies.txt http://localhost:51821/api/wireguard/client</pre>
+        </section>
+
+        <!-- Meta -->
+        <section id="meta-release" class="bg-white rounded-lg shadow-sm p-6 endpoint">
+          <h3 class="text-lg font-medium mb-2"><span class="method method-get">GET</span> <code class="inline">/api/release</code></h3>
+          <p class="text-sm text-gray-700 mb-3">Returns the numeric release identifier. Public.</p>
+          <p class="text-xs text-gray-500 mb-1">Response 200</p>
+          <pre class="code">8</pre>
+        </section>
+
+        <section id="meta-openapi" class="bg-white rounded-lg shadow-sm p-6 endpoint">
+          <h3 class="text-lg font-medium mb-2"><span class="method method-get">GET</span> <code class="inline">/api/openapi.json</code></h3>
+          <p class="text-sm text-gray-700 mb-3">Returns the full OpenAPI 3.0 specification for this API. Public.</p>
+        </section>
+
+        <!-- Session -->
+        <section id="session-get" class="bg-white rounded-lg shadow-sm p-6 endpoint">
+          <h3 class="text-lg font-medium mb-2"><span class="method method-get">GET</span> <code class="inline">/api/session</code></h3>
+          <p class="text-sm text-gray-700 mb-3">Reports session state. Public.</p>
+          <p class="text-xs text-gray-500 mb-1">Response 200</p>
+          <pre class="code">{
+  "requiresPassword": true,
+  "authenticated": false
+}</pre>
+        </section>
+
+        <section id="session-post" class="bg-white rounded-lg shadow-sm p-6 endpoint">
+          <h3 class="text-lg font-medium mb-2"><span class="method method-post">POST</span> <code class="inline">/api/session</code></h3>
+          <p class="text-sm text-gray-700 mb-3">Login. Sets a <code class="inline">connect.sid</code> cookie on success.</p>
+          <p class="text-xs text-gray-500 mb-1">Request body</p>
+          <pre class="code">{ "password": "YOURPASS" }</pre>
+          <table class="params mt-3">
+            <thead><tr><th>Status</th><th>Meaning</th></tr></thead>
+            <tbody>
+              <tr><td><code class="inline">204</code></td><td>Authenticated.</td></tr>
+              <tr><td><code class="inline">401</code></td><td>Missing or wrong password.</td></tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section id="session-delete" class="bg-white rounded-lg shadow-sm p-6 endpoint">
+          <h3 class="text-lg font-medium mb-2"><span class="method method-delete">DELETE</span> <code class="inline">/api/session</code></h3>
+          <p class="text-sm text-gray-700 mb-3">Logout. Destroys the session.</p>
+        </section>
+
+        <!-- Clients -->
+        <section id="clients-list" class="bg-white rounded-lg shadow-sm p-6 endpoint">
+          <h3 class="text-lg font-medium mb-2"><span class="method method-get">GET</span> <code class="inline">/api/wireguard/client</code></h3>
+          <p class="text-sm text-gray-700 mb-3">List all clients. Each entry includes live transfer counters and current schedule state from <code class="inline">wg show wg0 dump</code>.</p>
+          <p class="text-xs text-gray-500 mb-1">Response 200 (excerpt)</p>
+          <pre class="code">[
+  {
+    "id": "f6c1...",
+    "name": "phone",
+    "enabled": true,
+    "address": "10.8.0.2",
+    "publicKey": "abc...=",
+    "createdAt": "2026-04-26T10:00:00.000Z",
+    "updatedAt": "2026-04-27T08:00:00.000Z",
+    "schedule": { "enabled": false, "timezone": "UTC", "days": { "monday": { ... }, ... } },
+    "scheduleActive": true,
+    "transferRx": 12345,
+    "transferTx": 67890,
+    "latestHandshakeAt": "2026-04-27T07:55:00.000Z",
+    "persistentKeepalive": "off"
+  }
+]</pre>
+        </section>
+
+        <section id="clients-create" class="bg-white rounded-lg shadow-sm p-6 endpoint">
+          <h3 class="text-lg font-medium mb-2"><span class="method method-post">POST</span> <code class="inline">/api/wireguard/client</code></h3>
+          <p class="text-sm text-gray-700 mb-3">Create a new client. The server generates the keypair and PSK and allocates the next free IPv4. Defaults: <code class="inline">enabled=true</code>, schedule disabled.</p>
+          <p class="text-xs text-gray-500 mb-1">Request body</p>
+          <pre class="code">{ "name": "phone" }</pre>
+          <p class="text-xs text-gray-500 mb-1 mt-3">Response 200 — full server-side record (includes <code class="inline">privateKey</code> and <code class="inline">preSharedKey</code>).</p>
+        </section>
+
+        <section id="clients-delete" class="bg-white rounded-lg shadow-sm p-6 endpoint">
+          <h3 class="text-lg font-medium mb-2"><span class="method method-delete">DELETE</span> <code class="inline">/api/wireguard/client/{clientId}</code></h3>
+          <p class="text-sm text-gray-700 mb-3">Permanently delete a client. Idempotent (no error if it already does not exist).</p>
+        </section>
+
+        <section id="clients-enable" class="bg-white rounded-lg shadow-sm p-6 endpoint">
+          <h3 class="text-lg font-medium mb-2"><span class="method method-post">POST</span> <code class="inline">/api/wireguard/client/{clientId}/enable</code></h3>
+          <p class="text-sm text-gray-700 mb-3">Set <code class="inline">enabled=true</code>. Note: the peer is only added to <code class="inline">wg0.conf</code> if the schedule (when enabled) currently allows it.</p>
+        </section>
+
+        <section id="clients-disable" class="bg-white rounded-lg shadow-sm p-6 endpoint">
+          <h3 class="text-lg font-medium mb-2"><span class="method method-post">POST</span> <code class="inline">/api/wireguard/client/{clientId}/disable</code></h3>
+          <p class="text-sm text-gray-700 mb-3">Set <code class="inline">enabled=false</code>. Removes the peer from <code class="inline">wg0.conf</code>.</p>
+        </section>
+
+        <section id="clients-name" class="bg-white rounded-lg shadow-sm p-6 endpoint">
+          <h3 class="text-lg font-medium mb-2"><span class="method method-put">PUT</span> <code class="inline">/api/wireguard/client/{clientId}/name</code></h3>
+          <p class="text-sm text-gray-700 mb-3">Rename a client.</p>
+          <p class="text-xs text-gray-500 mb-1">Request body</p>
+          <pre class="code">{ "name": "laptop" }</pre>
+        </section>
+
+        <section id="clients-address" class="bg-white rounded-lg shadow-sm p-6 endpoint">
+          <h3 class="text-lg font-medium mb-2"><span class="method method-put">PUT</span> <code class="inline">/api/wireguard/client/{clientId}/address</code></h3>
+          <p class="text-sm text-gray-700 mb-3">Change the client IPv4 address inside the WireGuard tunnel.</p>
+          <p class="text-xs text-gray-500 mb-1">Request body</p>
+          <pre class="code">{ "address": "10.8.0.42" }</pre>
+          <p class="text-xs text-gray-500 mt-2">Returns 400 if the address is not a valid IPv4.</p>
+        </section>
+
+        <section id="clients-qr" class="bg-white rounded-lg shadow-sm p-6 endpoint">
+          <h3 class="text-lg font-medium mb-2"><span class="method method-get">GET</span> <code class="inline">/api/wireguard/client/{clientId}/qrcode.svg</code></h3>
+          <p class="text-sm text-gray-700 mb-3">Returns a 512×512 SVG QR code that encodes the client <code class="inline">.conf</code>. Content type: <code class="inline">image/svg+xml</code>.</p>
+        </section>
+
+        <section id="clients-conf" class="bg-white rounded-lg shadow-sm p-6 endpoint">
+          <h3 class="text-lg font-medium mb-2"><span class="method method-get">GET</span> <code class="inline">/api/wireguard/client/{clientId}/configuration</code></h3>
+          <p class="text-sm text-gray-700 mb-3">Download the WireGuard <code class="inline">.conf</code> file. Sends <code class="inline">Content-Disposition: attachment</code>.</p>
+        </section>
+
+        <!-- Schedule -->
+        <section id="schedule-put" class="bg-white rounded-lg shadow-sm p-6 endpoint">
+          <h3 class="text-lg font-medium mb-2"><span class="method method-put">PUT</span> <code class="inline">/api/wireguard/client/{clientId}/schedule</code></h3>
+          <p class="text-sm text-gray-700 mb-3">Replace the per-client schedule. Missing days are filled with <code class="inline">{ active: false, start: "00:00", end: "23:59" }</code>. Time strings are normalized to <code class="inline">HH:MM</code>; unknown timezones fall back to <code class="inline">UTC</code>.</p>
+          <p class="text-sm text-gray-700 mb-3">A 60-second background ticker rebuilds <code class="inline">wg0.conf</code> and runs <code class="inline">wg syncconf</code>, so peers are removed and restored as schedule boundaries pass — no client-side action needed.</p>
+          <p class="text-xs text-gray-500 mb-1">Request body</p>
+          <pre class="code">{
+  "schedule": {
+    "enabled": true,
+    "timezone": "Asia/Jakarta",
+    "days": {
+      "monday":    { "active": true,  "start": "08:00", "end": "17:00" },
+      "tuesday":   { "active": true,  "start": "08:00", "end": "17:00" },
+      "wednesday": { "active": true,  "start": "08:00", "end": "17:00" },
+      "thursday":  { "active": true,  "start": "08:00", "end": "17:00" },
+      "friday":    { "active": true,  "start": "08:00", "end": "17:00" },
+      "saturday":  { "active": false, "start": "00:00", "end": "23:59" },
+      "sunday":    { "active": false, "start": "00:00", "end": "23:59" }
+    }
+  }
+}</pre>
+          <p class="text-xs text-gray-500 mt-3 mb-1">Notes</p>
+          <ul class="list-disc ml-5 text-sm text-gray-700 space-y-1">
+            <li>If <code class="inline">end &lt; start</code> on a day, the active window wraps past midnight (e.g. <code class="inline">22:00 → 02:00</code>).</li>
+            <li>When <code class="inline">schedule.enabled</code> is <code class="inline">false</code>, the schedule is ignored and the client follows only the master <code class="inline">enabled</code> flag.</li>
+            <li>The schedule does not override the master <code class="inline">enabled</code> flag — both must be true (and the day must be active) for the peer to appear in <code class="inline">wg0.conf</code>.</li>
+          </ul>
+        </section>
+
+        <!-- Schemas -->
+        <section id="schema-client" class="bg-white rounded-lg shadow-sm p-6">
+          <h2 class="text-2xl font-medium mb-3">Schema: <code class="inline">Client</code></h2>
+          <table class="params">
+            <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+            <tbody>
+              <tr><td><code class="inline">id</code></td><td>string (uuid)</td><td>Server-assigned client id.</td></tr>
+              <tr><td><code class="inline">name</code></td><td>string</td><td>Display name.</td></tr>
+              <tr><td><code class="inline">enabled</code></td><td>boolean</td><td>Manual master enable flag.</td></tr>
+              <tr><td><code class="inline">address</code></td><td>string (IPv4)</td><td>Tunnel IPv4 (e.g. 10.8.0.2).</td></tr>
+              <tr><td><code class="inline">publicKey</code></td><td>string</td><td>WireGuard public key.</td></tr>
+              <tr><td><code class="inline">createdAt</code></td><td>string (ISO date)</td><td>Creation timestamp.</td></tr>
+              <tr><td><code class="inline">updatedAt</code></td><td>string (ISO date)</td><td>Last update timestamp.</td></tr>
+              <tr><td><code class="inline">latestHandshakeAt</code></td><td>string|null</td><td>Last handshake from <code class="inline">wg show dump</code>.</td></tr>
+              <tr><td><code class="inline">transferRx</code></td><td>integer|null</td><td>Bytes received from peer.</td></tr>
+              <tr><td><code class="inline">transferTx</code></td><td>integer|null</td><td>Bytes sent to peer.</td></tr>
+              <tr><td><code class="inline">persistentKeepalive</code></td><td>string|null</td><td>Reported keepalive setting.</td></tr>
+              <tr><td><code class="inline">schedule</code></td><td>Schedule</td><td>See below.</td></tr>
+              <tr><td><code class="inline">scheduleActive</code></td><td>boolean</td><td>True now according to schedule (or no schedule restriction).</td></tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section id="schema-schedule" class="bg-white rounded-lg shadow-sm p-6">
+          <h2 class="text-2xl font-medium mb-3">Schema: <code class="inline">Schedule</code></h2>
+          <table class="params">
+            <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+            <tbody>
+              <tr><td><code class="inline">enabled</code></td><td>boolean</td><td>Master toggle. When false, the schedule is ignored.</td></tr>
+              <tr><td><code class="inline">timezone</code></td><td>string</td><td>IANA timezone (e.g. <code class="inline">Asia/Jakarta</code>). Defaults to <code class="inline">UTC</code>; unknown zones are normalized to UTC.</td></tr>
+              <tr><td><code class="inline">days</code></td><td>object</td><td>Required keys: <code class="inline">monday</code>…<code class="inline">sunday</code>. Each maps to a <code class="inline">ScheduleDay</code>.</td></tr>
+            </tbody>
+          </table>
+          <h3 class="text-lg font-medium mt-5 mb-2">ScheduleDay</h3>
+          <table class="params">
+            <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+            <tbody>
+              <tr><td><code class="inline">active</code></td><td>boolean</td><td>Whether the client is allowed on this day.</td></tr>
+              <tr><td><code class="inline">start</code></td><td>string (HH:MM)</td><td>Start of the active window.</td></tr>
+              <tr><td><code class="inline">end</code></td><td>string (HH:MM)</td><td>End of the active window. If <code class="inline">end &lt; start</code>, the window wraps past midnight.</td></tr>
+            </tbody>
+          </table>
+        </section>
+
+        <p class="text-center text-gray-300 text-xs pb-4">
+          <a class="hover:underline" href="https://github.com/wg-easy/wg-easy" target="_blank">wg-easy on GitHub</a>
+        </p>
+
+      </main>
+
+    </div>
+
+  </div>
+
+</body>
+
+</html>
