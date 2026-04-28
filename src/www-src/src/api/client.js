@@ -48,6 +48,7 @@ export const api = {
   updateClientName: ({ clientId, name }) => call({ method: 'PUT', path: `/wireguard/client/${clientId}/name`, body: { name } }),
   updateClientAddress: ({ clientId, address }) => call({ method: 'PUT', path: `/wireguard/client/${clientId}/address`, body: { address } }),
   updateClientSchedule: ({ clientId, schedule }) => call({ method: 'PUT', path: `/wireguard/client/${clientId}/schedule`, body: { schedule } }),
+  updateClientMaxDevices: ({ clientId, maxDevices }) => call({ method: 'PUT', path: `/wireguard/client/${clientId}/max-devices`, body: { maxDevices } }),
   qrCodeUrl: ({ clientId }) => `/api/wireguard/client/${clientId}/qrcode.svg`,
   configurationUrl: ({ clientId }) => `/api/wireguard/client/${clientId}/configuration`,
 };

@@ -131,6 +131,16 @@ function isClientActiveBySchedule(client, now = new Date()) {
   return cur >= startMin || cur <= endMin;
 }
 
+const MAX_DEVICES_CAP = 99;
+const DEVICE_HANDSHAKE_FRESH_MS = 3 * 60 * 1000;
+const DEVICE_ENDPOINT_TTL_MS = 3 * 60 * 1000;
+
+function normalizeMaxDevices(value) {
+  const n = parseInt(value, 10);
+  if (Number.isNaN(n) || n < 0) return 0;
+  return Math.min(n, MAX_DEVICES_CAP);
+}
+
 module.exports = class WireGuard {
 
   async getConfig() {
@@ -177,9 +187,19 @@ module.exports = class WireGuard {
                 migrated = true;
               }
             }
+            if (client.maxDevices === undefined) {
+              client.maxDevices = 0;
+              migrated = true;
+            } else {
+              const m = normalizeMaxDevices(client.maxDevices);
+              if (m !== client.maxDevices) {
+                client.maxDevices = m;
+                migrated = true;
+              }
+            }
           }
         }
-        if (migrated) debug('Migrated existing clients to include schedule field.');
+        if (migrated) debug('Migrated existing clients to include schedule + maxDevices.');
 
         await this.__saveConfig(config);
         await Util.exec('wg-quick down wg0').catch(() => { });
@@ -277,28 +297,40 @@ AllowedIPs = ${client.address}/32`;
         debug(`Schedule tick error: ${err && err.message ? err.message : err}`);
       });
     }, 60 * 1000);
-    debug('Schedule ticker started (60s interval).');
+    setInterval(() => {
+      this.monitorDeviceConnections().catch(err => {
+        debug(`Device monitor tick error: ${err && err.message ? err.message : err}`);
+      });
+    }, 10 * 1000);
+    debug('Schedule (60s) and device monitor (10s) tickers started.');
   }
 
   async getClients() {
     const config = await this.getConfig();
-    const clients = Object.entries(config.clients).map(([clientId, client]) => ({
-      id: clientId,
-      name: client.name,
-      enabled: client.enabled,
-      address: client.address,
-      publicKey: client.publicKey,
-      createdAt: new Date(client.createdAt),
-      updatedAt: new Date(client.updatedAt),
-      allowedIPs: client.allowedIPs,
-      schedule: client.schedule || defaultSchedule(),
-      scheduleActive: isClientActiveBySchedule(client),
+    const clients = Object.entries(config.clients).map(([clientId, client]) => {
+      const tracking = this.__deviceTracking && this.__deviceTracking[clientId];
+      const activeDeviceCount = tracking ? Object.keys(tracking.endpoints).length : 0;
+      return {
+        id: clientId,
+        name: client.name,
+        enabled: client.enabled,
+        address: client.address,
+        publicKey: client.publicKey,
+        createdAt: new Date(client.createdAt),
+        updatedAt: new Date(client.updatedAt),
+        allowedIPs: client.allowedIPs,
+        schedule: client.schedule || defaultSchedule(),
+        scheduleActive: isClientActiveBySchedule(client),
+        maxDevices: client.maxDevices || 0,
+        activeDeviceCount,
+        deviceLimitExceededAt: client.deviceLimitExceededAt ? new Date(client.deviceLimitExceededAt) : null,
 
-      persistentKeepalive: null,
-      latestHandshakeAt: null,
-      transferRx: null,
-      transferTx: null,
-    }));
+        persistentKeepalive: null,
+        latestHandshakeAt: null,
+        transferRx: null,
+        transferTx: null,
+      };
+    });
 
     // Loop WireGuard status
     const dump = await Util.exec('wg show wg0 dump', {
@@ -413,6 +445,8 @@ Endpoint = ${WG_HOST}:${WG_PORT}`;
 
       enabled: true,
       schedule: defaultSchedule(),
+      maxDevices: 0,
+      deviceLimitExceededAt: null,
     };
 
     config.clients[clientId] = client;
@@ -427,6 +461,7 @@ Endpoint = ${WG_HOST}:${WG_PORT}`;
 
     if (config.clients[clientId]) {
       delete config.clients[clientId];
+      if (this.__deviceTracking) delete this.__deviceTracking[clientId];
       await this.saveConfig();
     }
   }
@@ -436,6 +471,8 @@ Endpoint = ${WG_HOST}:${WG_PORT}`;
 
     client.enabled = true;
     client.updatedAt = new Date();
+    client.deviceLimitExceededAt = null;
+    if (this.__deviceTracking) delete this.__deviceTracking[clientId];
 
     await this.saveConfig();
   }
@@ -478,6 +515,81 @@ Endpoint = ${WG_HOST}:${WG_PORT}`;
     client.updatedAt = new Date();
 
     await this.saveConfig();
+  }
+
+  async updateClientMaxDevices({ clientId, maxDevices }) {
+    const client = await this.getClient({ clientId });
+
+    client.maxDevices = normalizeMaxDevices(maxDevices);
+    client.updatedAt = new Date();
+    client.deviceLimitExceededAt = null;
+    if (this.__deviceTracking) delete this.__deviceTracking[clientId];
+
+    await this.saveConfig();
+  }
+
+  async monitorDeviceConnections() {
+    const config = await this.getConfig();
+
+    let dump;
+    try {
+      dump = await Util.exec('wg show wg0 dump', { log: false });
+    } catch (err) {
+      debug(`Device monitor: failed to read wg dump: ${err && err.message}`);
+      return;
+    }
+
+    if (!this.__deviceTracking) this.__deviceTracking = {};
+    const now = Date.now();
+    let changed = false;
+
+    const clientByPublicKey = {};
+    for (const [clientId, client] of Object.entries(config.clients)) {
+      clientByPublicKey[client.publicKey] = { clientId, client };
+    }
+
+    const lines = String(dump).trim().split('\n').slice(1);
+    for (const line of lines) {
+      const cols = line.split('\t');
+      const publicKey = cols[0];
+      const endpoint = cols[2];
+      const latestHandshakeAt = cols[4];
+      if (!publicKey || !endpoint || endpoint === '(none)') continue;
+
+      const handshakeMs = parseInt(latestHandshakeAt, 10) * 1000;
+      if (!handshakeMs || (now - handshakeMs) > DEVICE_HANDSHAKE_FRESH_MS) continue;
+
+      const entry = clientByPublicKey[publicKey];
+      if (!entry) continue;
+      const { clientId, client } = entry;
+      if (!client.maxDevices || client.maxDevices <= 0) continue;
+
+      let tracking = this.__deviceTracking[clientId];
+      if (!tracking) {
+        tracking = { endpoints: {} };
+        this.__deviceTracking[clientId] = tracking;
+      }
+      tracking.endpoints[endpoint] = now;
+
+      for (const ep of Object.keys(tracking.endpoints)) {
+        if (now - tracking.endpoints[ep] > DEVICE_ENDPOINT_TTL_MS) {
+          delete tracking.endpoints[ep];
+        }
+      }
+
+      const count = Object.keys(tracking.endpoints).length;
+      if (count > client.maxDevices && client.enabled) {
+        debug(`Device limit exceeded for ${client.name} (${count} > ${client.maxDevices}). Disabling peer.`);
+        client.enabled = false;
+        client.updatedAt = new Date();
+        client.deviceLimitExceededAt = new Date();
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      await this.saveConfig();
+    }
   }
 
 };
