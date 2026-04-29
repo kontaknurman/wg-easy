@@ -1,4 +1,5 @@
 <script setup>
+import { inject, computed } from 'vue';
 import AppHeader from '@/components/AppHeader.vue';
 import Card from '@/components/ui/Card.vue';
 import CardHeader from '@/components/ui/CardHeader.vue';
@@ -7,6 +8,9 @@ import CardDescription from '@/components/ui/CardDescription.vue';
 import CardContent from '@/components/ui/CardContent.vue';
 import Badge from '@/components/ui/Badge.vue';
 import Separator from '@/components/ui/Separator.vue';
+
+const settings = inject('settings');
+const brand = computed(() => settings?.siteName || 'this server');
 
 const sections = [
   { id: 'overview', label: 'Overview' },
@@ -68,7 +72,7 @@ function methodVariant(m) {
       <div class="mb-8">
         <h1 class="text-3xl font-bold tracking-tight">API documentation</h1>
         <p class="mt-2 text-sm text-muted-foreground">
-          REST endpoints exposed by the wg-easy server. Machine-readable spec at
+          REST endpoints exposed by {{ brand }}. Machine-readable spec at
           <a href="/api/openapi.json" class="font-mono text-primary hover:underline">/api/openapi.json</a>.
         </p>
       </div>
@@ -93,11 +97,11 @@ function methodVariant(m) {
           <Card id="overview">
             <CardHeader>
               <CardTitle>Overview</CardTitle>
-              <CardDescription>How to talk to wg-easy programmatically.</CardDescription>
+              <CardDescription>How to talk to the API programmatically.</CardDescription>
             </CardHeader>
             <CardContent class="text-sm leading-relaxed text-muted-foreground space-y-3">
               <p>
-                wg-easy exposes a small REST API for managing WireGuard peers. All paths are served from the same origin
+                The server exposes a small REST API for managing WireGuard peers. All paths are served from the same origin
                 as the dashboard. JSON is used for request/response bodies; binary endpoints (QR, .conf download) return
                 the appropriate <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">Content-Type</code>.
               </p>
@@ -150,7 +154,7 @@ curl -b cookies.txt http://localhost:51821/api/wireguard/client</pre>
           <Card id="bandwidth-limit-detail">
             <CardHeader>
               <CardTitle>Bandwidth limit (per-peer Mbps)</CardTitle>
-              <CardDescription>How wg-easy throttles a peer using Linux Traffic Control.</CardDescription>
+              <CardDescription>How the panel throttles a peer using Linux Traffic Control.</CardDescription>
             </CardHeader>
             <CardContent class="space-y-3 text-sm text-muted-foreground">
               <p>
@@ -164,7 +168,7 @@ curl -b cookies.txt http://localhost:51821/api/wireguard/client</pre>
               <p>Rules are reapplied on every save and on the schedule ticker, so they follow enable/schedule/limit changes. Setting <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">bandwidthLimit = 0</code> removes the cap on the next save.</p>
               <p class="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-300">
                 Requires <code class="rounded bg-background/40 px-1 py-0.5 text-[11px]">tc</code> on the host
-                (<code class="rounded bg-background/40 px-1 py-0.5 text-[11px]">iproute2-tc</code> on Alpine, included in the wg-easy Dockerfile). Without it the API still accepts the value but rules silently won't apply.
+                (<code class="rounded bg-background/40 px-1 py-0.5 text-[11px]">iproute2-tc</code> on Alpine, included in the bundled Dockerfile). Without it the API still accepts the value but rules silently won't apply.
               </p>
               <pre class="rounded-lg bg-zinc-900 p-4 text-xs leading-relaxed text-zinc-100 overflow-x-auto">curl -b cookies.txt -X PUT http://localhost:51821/api/wireguard/client/CLIENT_ID/bandwidth-limit \
   -H "Content-Type: application/json" \
@@ -175,12 +179,12 @@ curl -b cookies.txt http://localhost:51821/api/wireguard/client</pre>
           <Card id="device-limit-detail">
             <CardHeader>
               <CardTitle>Device limit (concurrent peers)</CardTitle>
-              <CardDescription>How wg-easy detects and reacts to multiple devices sharing one config.</CardDescription>
+              <CardDescription>How the panel detects and reacts to multiple devices sharing one config.</CardDescription>
             </CardHeader>
             <CardContent class="space-y-3 text-sm text-muted-foreground">
               <p>
                 WireGuard's protocol does not expose a hard "reject" hook — anyone with the private key can complete
-                a handshake. wg-easy approximates "max devices per config" by polling
+                a handshake. The server approximates "max devices per config" by polling
                 <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">wg show wg0 dump</code>
                 every 10 seconds and tracking the distinct
                 <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">endpoint</code> values that show a

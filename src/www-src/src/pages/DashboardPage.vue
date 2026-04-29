@@ -19,6 +19,7 @@ import { HugeiconsIcon } from '@hugeicons/vue';
 import { UserAdd01Icon, UserMultiple02Icon } from '@hugeicons/core-free-icons';
 
 const session = inject('session');
+const settings = inject('settings');
 const requiresPassword = computed(() => session.value?.requiresPassword || false);
 
 const clients = ref([]);
@@ -129,7 +130,7 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer); });
         <div>
           <h1 class="text-3xl font-bold tracking-tight">Clients</h1>
           <p class="mt-1 text-sm text-muted-foreground">
-            Manage WireGuard peers, schedules and configuration.
+            {{ settings?.tagline || 'Manage WireGuard peers, schedules and configuration.' }}
           </p>
         </div>
         <Button @click="createOpen = true">
@@ -173,6 +174,10 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer); });
             @error="toastError" />
         </div>
       </Card>
+
+      <p v-if="settings?.footerText" class="mt-8 text-center text-xs text-muted-foreground">
+        {{ settings.footerText }}
+      </p>
     </main>
 
     <CreateClientDialog v-model:open="createOpen" @create="createClient" />

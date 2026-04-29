@@ -1,57 +1,34 @@
-# WireGuard Easy
+# VPN Panel
 
-[![Build & Publish Docker Image to Docker Hub](https://github.com/wg-easy/wg-easy/actions/workflows/deploy.yml/badge.svg?branch=production)](https://github.com/wg-easy/wg-easy/actions/workflows/deploy.yml)
-[![Lint](https://github.com/wg-easy/wg-easy/actions/workflows/lint.yml/badge.svg?branch=master)](https://github.com/wg-easy/wg-easy/actions/workflows/lint.yml)
-![Docker](https://img.shields.io/docker/pulls/weejewel/wg-easy.svg)
-[![Sponsor](https://img.shields.io/github/sponsors/weejewel)](https://github.com/sponsors/WeeJeWel)
-![GitHub Stars](https://img.shields.io/github/stars/wg-easy/wg-easy)
-
-You have found the easiest way to install & manage WireGuard on any Linux host!
-
-<p align="center">
-  <img src="./assets/screenshot.png" width="802" />
-</p>
+Self-hosted WireGuard administration panel. List, create, edit, schedule,
+rate-limit and monitor WireGuard peers from a web UI.
 
 ## Features
 
-* All-in-one: WireGuard + Web UI.
-* Easy installation, simple to use.
-* List, create, edit, delete, enable & disable clients.
-* Show a client's QR code.
-* Download a client's configuration file.
-* Statistics for which clients are connected.
-* Tx/Rx charts for each connected client.
-* Gravatar support.
+- Vue 3 dashboard with shadcn-style UI and dark mode.
+- Per-peer schedule (Mon–Sun + per-day active hours, IANA timezone).
+- Per-peer max-devices detection (auto-disables peers used from too many endpoints).
+- Per-peer bandwidth limit via Linux Traffic Control (`tc` HTB + ingress police).
+- QR-code download, raw `.conf` download, live transfer counters.
+- Site settings page to brand the panel (site name, tagline, login copy, footer).
+- OpenAPI 3.0 spec at `/api/openapi.json` and an in-app docs page.
+- Cookie-based auth via `PASSWORD` env (optional).
 
 ## Requirements
 
-* A host with a kernel that supports WireGuard (all modern kernels).
-* A host with Docker installed.
+- Linux host with WireGuard kernel support (any modern kernel).
+- Docker.
 
-## Installation
-
-### 1. Install Docker
-
-If you haven't installed Docker yet, install it by running:
+## Run
 
 ```bash
-$ curl -sSL https://get.docker.com | sh
-$ sudo usermod -aG docker $(whoami)
-$ exit
-```
+docker build -t vpn-panel .
 
-And log in again.
-
-### 2. Run WireGuard Easy
-
-To automatically install & run wg-easy, simply run:
-
-<pre>
-$ docker run -d \
-  --name=wg-easy \
-  -e WG_HOST=<b>🚨YOUR_SERVER_IP</b> \
-  -e PASSWORD=<b>🚨YOUR_ADMIN_PASSWORD</b> \
-  -v ~/.wg-easy:/etc/wireguard \
+docker run -d \
+  --name=vpn-panel \
+  -e WG_HOST=YOUR_SERVER_IP \
+  -e PASSWORD=YOUR_ADMIN_PASSWORD \
+  -v ~/.vpn-panel:/etc/wireguard \
   -p 51820:51820/udp \
   -p 51821:51821/tcp \
   --cap-add=NET_ADMIN \
@@ -59,56 +36,52 @@ $ docker run -d \
   --sysctl="net.ipv4.conf.all.src_valid_mark=1" \
   --sysctl="net.ipv4.ip_forward=1" \
   --restart unless-stopped \
-  ghcr.io/wg-easy/wg-easy
-</pre>
+  vpn-panel
+```
 
-> 💡 Replace `YOUR_SERVER_IP` with your WAN IP, or a Dynamic DNS hostname.
-> 
-> 💡 Replace `YOUR_ADMIN_PASSWORD` with a password to log in on the Web UI.
+Web UI: `http://YOUR_SERVER_IP:51821`. Configuration is persisted in `~/.vpn-panel/wg0.json`.
 
-The Web UI will now be available on `http://0.0.0.0:51821`.
-
-> 💡 Your configuration files will be saved in `~/.wg-easy`
-
-### 3. Sponsor
-
-Are you enjoying this project? [Buy me a beer!](https://github.com/sponsors/WeeJeWel) 🍻
-
-## Options
-
-These options can be configured by setting environment variables using `-e KEY="VALUE"` in the `docker run` command.
+## Environment variables
 
 | Env | Default | Example | Description |
 | - | - | - | - |
-| `PASSWORD` | - | `foobar123` | When set, requires a password when logging in to the Web UI. |
-| `WG_HOST` | - | `vpn.myserver.com` | The public hostname of your VPN server. |
-| `WG_DEVICE` | `eth0` | `ens6f0` | Ethernet device the wireguard traffic should be forwarded through. |
-| `WG_PORT` | `51820` | `12345` | The public UDP port of your VPN server. WireGuard will always listen on `51820` inside the Docker container. |
-| `WG_MTU` | `null` | `1420` | The MTU the clients will use. Server uses default WG MTU. |
-| `WG_PERSISTENT_KEEPALIVE` | `0` | `25` | Value in seconds to keep the "connection" open. If this value is 0, then connections won't be kept alive. |
-| `WG_DEFAULT_ADDRESS` | `10.8.0.x` | `10.6.0.x` | Clients IP address range. |
-| `WG_DEFAULT_DNS` | `1.1.1.1` | `8.8.8.8, 8.8.4.4` | DNS server clients will use. |
-| `WG_ALLOWED_IPS` | `0.0.0.0/0, ::/0` | `192.168.15.0/24, 10.0.1.0/24` | Allowed IPs clients will use. |
-| `WG_PRE_UP` | `...` | - | See [config.js](https://github.com/wg-easy/wg-easy/blob/master/src/config.js#L19) for the default value. |
-| `WG_POST_UP` | `...` | `iptables ...` | See [config.js](https://github.com/wg-easy/wg-easy/blob/master/src/config.js#L20) for the default value. |
-| `WG_PRE_DOWN` | `...` | - | See [config.js](https://github.com/wg-easy/wg-easy/blob/master/src/config.js#L27) for the default value. |
-| `WG_POST_DOWN` | `...` | `iptables ...` | See [config.js](https://github.com/wg-easy/wg-easy/blob/master/src/config.js#L28) for the default value. |
+| `PASSWORD` | - | `foobar123` | Required password for the Web UI. When unset, the API is open. |
+| `WG_HOST` | - | `vpn.example.com` | Public hostname or IP advertised in client configs. |
+| `WG_DEVICE` | `eth0` | `ens6f0` | Egress interface for masquerading. |
+| `WG_PORT` | `51820` | `12345` | Public UDP port. WireGuard always listens on `51820` inside the container. |
+| `WG_MTU` | `null` | `1420` | Client MTU. Server uses default. |
+| `WG_PERSISTENT_KEEPALIVE` | `0` | `25` | Seconds. `0` disables keepalive. |
+| `WG_DEFAULT_ADDRESS` | `10.8.0.x` | `10.6.0.x` | Tunnel subnet template. |
+| `WG_DEFAULT_DNS` | `1.1.1.1` | `8.8.8.8, 8.8.4.4` | DNS pushed to clients. |
+| `WG_ALLOWED_IPS` | `0.0.0.0/0, ::/0` | `192.168.15.0/24` | AllowedIPs in client configs. |
+| `WG_PRE_UP` / `WG_POST_UP` / `WG_PRE_DOWN` / `WG_POST_DOWN` | see `src/config.js` | shell snippets | Hooks injected into `wg0.conf`. |
 
-> If you change `WG_PORT`, make sure to also change the exposed port.
+If you change `WG_PORT`, also change the exposed Docker port.
 
-## Updating
+## Architecture
 
-To update to the latest version, simply run:
+- **Backend**: Node.js 18 + Express. Source under `src/lib/` and `src/services/`. State persisted to `wg0.json`.
+- **Frontend**: Vue 3 + Vite + Tailwind 3 + reka-ui + HugeIcons. Source under `src/www-src/`, built bundle under `src/www/`.
+- **Traffic shaping**: bandwidth limits use `tc` HTB on `wg0` egress and `tc` `police` on ingress.
+- **Schedule enforcement**: a 60-second ticker rebuilds `wg0.conf` so peers come and go with their active windows; a 10-second ticker watches `wg show wg0 dump` for the device-limit check.
+
+## Development
 
 ```bash
-docker stop wg-easy
-docker rm wg-easy
-docker pull ghcr.io/wg-easy/wg-easy
+# Backend
+cd src
+npm install
+npm run serve   # or `npm run serve-with-password`
+
+# Frontend (separate terminal)
+cd src/www-src
+npm install
+npm run dev     # vite dev server, /api proxied to localhost:51821
+
+# Production build
+cd src/www-src && npm run build   # writes hashed assets to ../www/
 ```
 
-And then run the `docker run -d \ ...` command above again.
+## License
 
-## Common Use Cases
-
-* [Using WireGuard-Easy with Pi-Hole](https://github.com/wg-easy/wg-easy/wiki/Using-WireGuard-Easy-with-Pi-Hole)
-* [Using WireGuard-Easy with nginx/SSL](https://github.com/wg-easy/wg-easy/wiki/Using-WireGuard-Easy-with-nginx-SSL)
+GPL-2.0-or-later.

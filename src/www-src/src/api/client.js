@@ -50,6 +50,9 @@ export const api = {
   updateClientSchedule: ({ clientId, schedule }) => call({ method: 'PUT', path: `/wireguard/client/${clientId}/schedule`, body: { schedule } }),
   updateClientMaxDevices: ({ clientId, maxDevices }) => call({ method: 'PUT', path: `/wireguard/client/${clientId}/max-devices`, body: { maxDevices } }),
   updateClientBandwidthLimit: ({ clientId, bandwidthLimit }) => call({ method: 'PUT', path: `/wireguard/client/${clientId}/bandwidth-limit`, body: { bandwidthLimit } }),
+
+  getSettings: () => call({ method: 'GET', path: '/settings' }),
+  updateSettings: (patch) => call({ method: 'PUT', path: '/settings', body: patch }),
   qrCodeUrl: ({ clientId }) => `/api/wireguard/client/${clientId}/qrcode.svg`,
   configurationUrl: ({ clientId }) => `/api/wireguard/client/${clientId}/configuration`,
 };

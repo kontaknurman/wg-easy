@@ -1,15 +1,18 @@
 <script setup>
 import { useRouter } from 'vue-router';
+import { ref, onMounted, watch, inject } from 'vue';
 import Button from '@/components/ui/Button.vue';
 import { HugeiconsIcon } from '@hugeicons/vue';
-import { Logout03Icon, BookOpen01Icon, ShieldEnergyIcon, Moon02Icon, Sun03Icon } from '@hugeicons/core-free-icons';
-import { ref, onMounted, watch } from 'vue';
+import {
+  Logout03Icon, BookOpen01Icon, ShieldEnergyIcon, Moon02Icon, Sun03Icon, Settings02Icon,
+} from '@hugeicons/core-free-icons';
 import { api } from '@/api/client';
 import { toastError } from '@/lib/toast';
 
 const props = defineProps({ requiresPassword: { type: Boolean, default: false } });
 const emit = defineEmits(['logged-out']);
 const router = useRouter();
+const settings = inject('settings');
 
 const dark = ref(false);
 onMounted(() => {
@@ -36,13 +39,16 @@ async function logout() {
     <div class="container mx-auto flex h-14 max-w-5xl items-center justify-between px-4">
       <router-link to="/" class="flex items-center gap-2 font-semibold">
         <HugeiconsIcon :icon="ShieldEnergyIcon" :size="22" :stroke-width="2" class="text-primary" />
-        <span>wg-easy</span>
+        <span class="truncate max-w-[16rem]">{{ settings?.siteName || 'VPN Panel' }}</span>
       </router-link>
 
       <div class="flex items-center gap-1">
-        <Button variant="ghost" size="sm" :as="'router-link'" to="/docs" class="hidden sm:inline-flex">
+        <Button v-if="settings?.showApiDocs !== false" variant="ghost" size="sm" :as="'router-link'" to="/docs" class="hidden sm:inline-flex">
           <HugeiconsIcon :icon="BookOpen01Icon" :size="16" :stroke-width="2" />
           API docs
+        </Button>
+        <Button variant="ghost" size="icon" class="h-9 w-9" title="Site settings" :as="'router-link'" to="/settings">
+          <HugeiconsIcon :icon="Settings02Icon" :size="18" :stroke-width="2" />
         </Button>
         <Button variant="ghost" size="icon" class="h-9 w-9" :title="dark ? 'Switch to light' : 'Switch to dark'" @click="dark = !dark">
           <HugeiconsIcon :icon="dark ? Sun03Icon : Moon02Icon" :size="18" :stroke-width="2" />

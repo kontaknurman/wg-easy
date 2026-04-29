@@ -1,7 +1,9 @@
 {
-  "name": "WireGuard",
+  "name": "VPN Panel",
+  "short_name": "VPN Panel",
   "display": "standalone",
-  "background_color": "#fff",
+  "background_color": "#0a0a0a",
+  "theme_color": "#0a0a0a",
   "icons": [
     {
       "src": "img/favicon.png",

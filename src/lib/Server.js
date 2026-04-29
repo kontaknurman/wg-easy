@@ -9,7 +9,7 @@ const debug = require('debug')('Server');
 const Util = require('./Util');
 const ServerError = require('./ServerError');
 const WireGuard = require('../services/WireGuard');
-const openapi = require('./openapi');
+const buildOpenApi = require('./openapi');
 
 const {
   PORT,
@@ -35,7 +35,11 @@ module.exports = class Server {
         return RELEASE;
       })))
       .get('/api/openapi.json', Util.promisify(async () => {
-        return openapi;
+        const settings = await WireGuard.getSettings();
+        return buildOpenApi(settings);
+      }))
+      .get('/api/settings', Util.promisify(async () => {
+        return WireGuard.getSettings();
       }))
 
       // Authentication
@@ -152,6 +156,9 @@ module.exports = class Server {
         const { clientId } = req.params;
         const { bandwidthLimit } = req.body;
         return WireGuard.updateClientBandwidthLimit({ clientId, bandwidthLimit });
+      }))
+      .put('/api/settings', Util.promisify(async req => {
+        return WireGuard.updateSettings(req.body || {});
       }))
 
       // SPA fallback: any non-API GET that isn't a static file falls back to index.html
