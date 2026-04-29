@@ -1,6 +1,6 @@
 version: "3.8"
 services:
-  wg-easy:
+  vpn-panel:
     environment:
       # ⚠️ Required:
       # Change this to your host's public address
@@ -17,9 +17,9 @@ services:
       # - WG_POST_UP=echo "Post Up" > /etc/wireguard/post-up.txt
       # - WG_PRE_DOWN=echo "Pre Down" > /etc/wireguard/pre-down.txt
       # - WG_POST_DOWN=echo "Post Down" > /etc/wireguard/post-down.txt
-      
-    image: ghcr.io/wg-easy/wg-easy
-    container_name: wg-easy
+
+    build: .
+    container_name: vpn-panel
     volumes:
       - .:/etc/wireguard
     ports:

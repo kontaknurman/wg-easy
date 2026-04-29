@@ -1,10 +1,8 @@
 <script setup>
-import { ref, inject } from 'vue';
+import { ref, inject, computed } from 'vue';
 import { useRouter } from 'vue-router';
 import { api } from '@/api/client';
 import { toastError } from '@/lib/toast';
-
-const refreshSession = inject('refreshSession');
 import Card from '@/components/ui/Card.vue';
 import CardHeader from '@/components/ui/CardHeader.vue';
 import CardTitle from '@/components/ui/CardTitle.vue';
@@ -16,9 +14,15 @@ import Label from '@/components/ui/Label.vue';
 import { HugeiconsIcon } from '@hugeicons/vue';
 import { ShieldEnergyIcon, LockKeyIcon } from '@hugeicons/core-free-icons';
 
+const refreshSession = inject('refreshSession');
+const settings = inject('settings');
+
 const password = ref('');
 const submitting = ref(false);
 const router = useRouter();
+
+const title = computed(() => settings?.loginTitle || settings?.siteName || 'VPN Panel');
+const subtitle = computed(() => settings?.loginSubtitle || 'Sign in to continue');
 
 async function login() {
   if (!password.value) return;
@@ -43,8 +47,8 @@ async function login() {
         <div class="mb-2 flex h-12 w-12 items-center justify-center rounded-full bg-primary text-primary-foreground">
           <HugeiconsIcon :icon="ShieldEnergyIcon" :size="24" :stroke-width="2" />
         </div>
-        <CardTitle>wg-easy</CardTitle>
-        <CardDescription>Sign in to manage your WireGuard peers.</CardDescription>
+        <CardTitle>{{ title }}</CardTitle>
+        <CardDescription>{{ subtitle }}</CardDescription>
       </CardHeader>
       <CardContent>
         <form class="grid gap-3" @submit.prevent="login">

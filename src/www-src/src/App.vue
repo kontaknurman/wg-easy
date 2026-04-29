@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router';
 import Toaster from '@/components/ui/Toaster.vue';
 import { api } from '@/api/client';
 import { toastError } from '@/lib/toast';
+import { loadSettings, settings } from '@/lib/settings';
 
 const session = ref(null);
 const ready = ref(false);
@@ -21,8 +22,11 @@ async function refreshSession() {
 
 provide('session', session);
 provide('refreshSession', refreshSession);
+provide('settings', settings);
 
-onMounted(refreshSession);
+onMounted(async () => {
+  await Promise.all([refreshSession(), loadSettings()]);
+});
 
 router.beforeEach(async (to) => {
   if (!ready.value) await refreshSession();

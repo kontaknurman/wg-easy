@@ -1,4 +1,4 @@
-# wg-easy frontend
+# Frontend
 
 Vue 3 + Vite + Tailwind 3 SPA. Uses shadcn-style components built on
 [reka-ui](https://reka-ui.com/) and [HugeIcons](https://hugeicons.com/).

@@ -76,386 +76,431 @@ const clientSchema = {
   required: ['id', 'name', 'enabled', 'address', 'publicKey', 'createdAt', 'updatedAt'],
 };
 
-module.exports = {
-  openapi: '3.0.3',
-  info: {
-    title: 'wg-easy API',
-    version: String(release),
-    description: 'Self-hosted WireGuard manager. All `/api/wireguard/**` endpoints require an authenticated session when `PASSWORD` is set on the server.',
-  },
-  servers: [
-    { url: '/', description: 'Same origin' },
-  ],
-  components: {
-    securitySchemes: {
-      sessionCookie: {
-        type: 'apiKey',
-        in: 'cookie',
-        name: 'connect.sid',
-        description: 'Express session cookie. Obtain by `POST /api/session` with the configured password.',
-      },
+function buildSpec(settings = {}) {
+  const siteName = settings.siteName || 'VPN Panel';
+  return {
+    openapi: '3.0.3',
+    info: {
+      title: `${siteName} API`,
+      version: String(release),
+      description: `Self-hosted WireGuard administration API for ${siteName}. All \`/api/wireguard/**\` endpoints require an authenticated session when \`PASSWORD\` is set on the server.`,
     },
-    schemas: {
-      Error: errorSchema,
-      ScheduleDay: scheduleDaySchema,
-      Schedule: scheduleSchema,
-      Client: clientSchema,
-      Session: {
-        type: 'object',
-        properties: {
-          requiresPassword: { type: 'boolean', description: 'True when the server is started with the `PASSWORD` env set.' },
-          authenticated: { type: 'boolean', description: 'True when the current session has been logged in. Always true when `requiresPassword` is false.' },
+    servers: [
+      { url: '/', description: 'Same origin' },
+    ],
+    components: {
+      securitySchemes: {
+        sessionCookie: {
+          type: 'apiKey',
+          in: 'cookie',
+          name: 'connect.sid',
+          description: 'Express session cookie. Obtain by `POST /api/session` with the configured password.',
         },
-        required: ['requiresPassword', 'authenticated'],
       },
-    },
-  },
-  paths: {
-    '/api/release': {
-      get: {
-        tags: ['Meta'],
-        summary: 'Get the current server release number',
-        responses: {
-          200: {
-            description: 'Numeric release identifier (matches `release` in package.json).',
-            content: { 'application/json': { schema: { type: 'integer' }, example: release } },
+      schemas: {
+        Error: errorSchema,
+        ScheduleDay: scheduleDaySchema,
+        Schedule: scheduleSchema,
+        Client: clientSchema,
+        Session: {
+          type: 'object',
+          properties: {
+            requiresPassword: { type: 'boolean', description: 'True when the server is started with the `PASSWORD` env set.' },
+            authenticated: { type: 'boolean', description: 'True when the current session has been logged in. Always true when `requiresPassword` is false.' },
+          },
+          required: ['requiresPassword', 'authenticated'],
+        },
+        Settings: {
+          type: 'object',
+          description: 'Public site branding shown in the panel UI.',
+          properties: {
+            siteName: { type: 'string', maxLength: 60, description: 'Brand name shown in the header, login page, browser tab title, and docs.' },
+            tagline: { type: 'string', maxLength: 200, description: 'Short tagline shown under the dashboard heading.' },
+            loginTitle: { type: 'string', maxLength: 60, description: 'Override for the login page title. When empty, falls back to siteName.' },
+            loginSubtitle: { type: 'string', maxLength: 200, description: 'Subtitle shown under the login title.' },
+            showApiDocs: { type: 'boolean', description: 'When false, hides the API docs link from the header (the page itself remains reachable).' },
+            footerText: { type: 'string', maxLength: 500, description: 'Optional footer text shown below the dashboard.' },
           },
         },
       },
     },
-    '/api/openapi.json': {
-      get: {
-        tags: ['Meta'],
-        summary: 'OpenAPI 3.0 specification for this API',
-        responses: {
-          200: {
-            description: 'OpenAPI document.',
-            content: { 'application/json': { schema: { type: 'object' } } },
-          },
-        },
-      },
-    },
-    '/api/session': {
-      get: {
-        tags: ['Session'],
-        summary: 'Get current session state',
-        security: [],
-        responses: {
-          200: {
-            description: 'Session state',
-            content: { 'application/json': { schema: { $ref: '#/components/schemas/Session' } } },
-          },
-        },
-      },
-      post: {
-        tags: ['Session'],
-        summary: 'Login with password',
-        security: [],
-        requestBody: {
-          required: true,
-          content: {
-            'application/json': {
-              schema: {
-                type: 'object',
-                properties: { password: { type: 'string' } },
-                required: ['password'],
-              },
+    paths: {
+      '/api/release': {
+        get: {
+          tags: ['Meta'],
+          summary: 'Get the current server release number',
+          responses: {
+            200: {
+              description: 'Numeric release identifier (matches `release` in package.json).',
+              content: { 'application/json': { schema: { type: 'integer' }, example: release } },
             },
           },
         },
-        responses: {
-          204: { description: 'Login successful. A `connect.sid` cookie is set on the response.' },
-          401: { description: 'Missing or incorrect password.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
-        },
       },
-      delete: {
-        tags: ['Session'],
-        summary: 'Logout (destroy session)',
-        responses: {
-          204: { description: 'Session destroyed.' },
-          401: { description: 'Not logged in.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
-        },
-      },
-    },
-    '/api/wireguard/client': {
-      get: {
-        tags: ['Client'],
-        summary: 'List all clients with live transfer stats',
-        responses: {
-          200: {
-            description: 'Array of clients.',
-            content: { 'application/json': { schema: { type: 'array', items: { $ref: '#/components/schemas/Client' } } } },
-          },
-          401: { description: 'Not logged in.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
-        },
-      },
-      post: {
-        tags: ['Client'],
-        summary: 'Create a new client',
-        description: 'Generates a new WireGuard keypair and PSK, allocates the next free IPv4 in the tunnel subnet, defaults `enabled=true`, and creates an empty disabled schedule.',
-        requestBody: {
-          required: true,
-          content: {
-            'application/json': {
-              schema: {
-                type: 'object',
-                properties: { name: { type: 'string' } },
-                required: ['name'],
-              },
+      '/api/openapi.json': {
+        get: {
+          tags: ['Meta'],
+          summary: 'OpenAPI 3.0 specification for this API',
+          responses: {
+            200: {
+              description: 'OpenAPI document.',
+              content: { 'application/json': { schema: { type: 'object' } } },
             },
           },
         },
-        responses: {
-          200: {
-            description: 'Client created. The full server-side client record (including `privateKey` and `preSharedKey`) is returned.',
-            content: { 'application/json': { schema: { type: 'object' } } },
-          },
-          400: { description: 'Invalid input.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
-          401: { description: 'Not logged in.' },
-        },
       },
-    },
-    '/api/wireguard/client/{clientId}': {
-      parameters: [
-        {
-          name: 'clientId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' },
-        },
-      ],
-      delete: {
-        tags: ['Client'],
-        summary: 'Delete a client',
-        responses: {
-          204: { description: 'Client removed (or did not exist).' },
-          401: { description: 'Not logged in.' },
-        },
-      },
-    },
-    '/api/wireguard/client/{clientId}/enable': {
-      parameters: [
-        {
-          name: 'clientId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' },
-        },
-      ],
-      post: {
-        tags: ['Client'],
-        summary: 'Enable a client (sets `enabled=true`)',
-        description: 'The peer will only actually be added to `wg0.conf` if the schedule (when enabled) allows the current time.',
-        responses: {
-          204: { description: 'Client enabled.' },
-          401: { description: 'Not logged in.' },
-          404: { description: 'Client not found.' },
-        },
-      },
-    },
-    '/api/wireguard/client/{clientId}/disable': {
-      parameters: [
-        {
-          name: 'clientId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' },
-        },
-      ],
-      post: {
-        tags: ['Client'],
-        summary: 'Disable a client (sets `enabled=false`)',
-        responses: {
-          204: { description: 'Client disabled. Peer removed from `wg0.conf`.' },
-          401: { description: 'Not logged in.' },
-          404: { description: 'Client not found.' },
-        },
-      },
-    },
-    '/api/wireguard/client/{clientId}/name': {
-      parameters: [
-        {
-          name: 'clientId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' },
-        },
-      ],
-      put: {
-        tags: ['Client'],
-        summary: 'Rename a client',
-        requestBody: {
-          required: true,
-          content: {
-            'application/json': {
-              schema: {
-                type: 'object',
-                properties: { name: { type: 'string' } },
-                required: ['name'],
-              },
+      '/api/settings': {
+        get: {
+          tags: ['Settings'],
+          summary: 'Get site branding/settings',
+          description: 'Public — fetched by the SPA on every page load to render the brand name, login page copy, and toggle the API docs link.',
+          security: [],
+          responses: {
+            200: {
+              description: 'Current site settings.',
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/Settings' } } },
             },
           },
         },
-        responses: {
-          204: { description: 'Client renamed.' },
-          401: { description: 'Not logged in.' },
-          404: { description: 'Client not found.' },
+        put: {
+          tags: ['Settings'],
+          summary: 'Update site branding/settings',
+          description: 'Partial update: any fields you omit keep their current value. All fields are sanitized server-side (control characters stripped, max-length clamped).',
+          requestBody: {
+            required: true,
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/Settings' } } },
+          },
+          responses: {
+            200: { description: 'Updated settings.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Settings' } } } },
+            401: { description: 'Not logged in.' },
+          },
         },
       },
-    },
-    '/api/wireguard/client/{clientId}/address': {
-      parameters: [
-        {
-          name: 'clientId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' },
-        },
-      ],
-      put: {
-        tags: ['Client'],
-        summary: 'Change a client IPv4 address inside the tunnel',
-        requestBody: {
-          required: true,
-          content: {
-            'application/json': {
-              schema: {
-                type: 'object',
-                properties: { address: { type: 'string', example: '10.8.0.2' } },
-                required: ['address'],
-              },
+      '/api/session': {
+        get: {
+          tags: ['Session'],
+          summary: 'Get current session state',
+          security: [],
+          responses: {
+            200: {
+              description: 'Session state',
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/Session' } } },
             },
           },
         },
-        responses: {
-          204: { description: 'Address updated.' },
-          400: { description: 'Address is not a valid IPv4.' },
-          401: { description: 'Not logged in.' },
-          404: { description: 'Client not found.' },
-        },
-      },
-    },
-    '/api/wireguard/client/{clientId}/schedule': {
-      parameters: [
-        {
-          name: 'clientId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' },
-        },
-      ],
-      put: {
-        tags: ['Schedule'],
-        summary: 'Set the per-day connection schedule',
-        description: 'Replaces the entire schedule. Missing days are filled with `{ active: false, start: "00:00", end: "23:59" }`. The server normalizes time strings to `HH:MM` and rejects unknown timezones (falls back to "UTC"). A 60-second background ticker rebuilds `wg0.conf` so peers are removed/restored as schedule boundaries pass.',
-        requestBody: {
-          required: true,
-          content: {
-            'application/json': {
-              schema: {
-                type: 'object',
-                properties: { schedule: { $ref: '#/components/schemas/Schedule' } },
-                required: ['schedule'],
-              },
-            },
-          },
-        },
-        responses: {
-          204: { description: 'Schedule saved.' },
-          401: { description: 'Not logged in.' },
-          404: { description: 'Client not found.' },
-        },
-      },
-    },
-    '/api/wireguard/client/{clientId}/max-devices': {
-      parameters: [
-        {
-          name: 'clientId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' },
-        },
-      ],
-      put: {
-        tags: ['Limits'],
-        summary: 'Set the maximum concurrent devices allowed for this config',
-        description: 'WireGuard cannot natively reject a second device using the same key. wg-easy detects concurrent use by polling `wg show wg0 dump` every 10 seconds and tracking distinct peer endpoints with a fresh handshake (within the last ~3 minutes). If the count exceeds `maxDevices`, the peer is auto-disabled and `deviceLimitExceededAt` is set. Setting `maxDevices = 0` disables the limit. Re-enabling the client manually clears the tracking.',
-        requestBody: {
-          required: true,
-          content: {
-            'application/json': {
-              schema: {
-                type: 'object',
-                properties: { maxDevices: { type: 'integer', minimum: 0, maximum: 99 } },
-                required: ['maxDevices'],
-              },
-            },
-          },
-        },
-        responses: {
-          204: { description: 'Limit saved.' },
-          401: { description: 'Not logged in.' },
-          404: { description: 'Client not found.' },
-        },
-      },
-    },
-    '/api/wireguard/client/{clientId}/bandwidth-limit': {
-      parameters: [
-        {
-          name: 'clientId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' },
-        },
-      ],
-      put: {
-        tags: ['Limits'],
-        summary: 'Set the bandwidth cap (Mbps) for this peer',
-        description: 'Applies a symmetric bandwidth cap using Linux Traffic Control on the `wg0` interface. Download (server → client) is shaped via HTB classes on egress; upload (client → server) is enforced via an ingress `police` filter that drops excess. Setting `bandwidthLimit = 0` removes the cap. Rules are rebuilt every save and on the schedule ticker so they follow enable/schedule changes. Requires `tc` (`iproute2-tc`) on the host.',
-        requestBody: {
-          required: true,
-          content: {
-            'application/json': {
-              schema: {
-                type: 'object',
-                properties: {
-                  bandwidthLimit: {
-                    type: 'integer', minimum: 0, maximum: 10000, description: 'Mbps',
-                  },
+        post: {
+          tags: ['Session'],
+          summary: 'Login with password',
+          security: [],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: { password: { type: 'string' } },
+                  required: ['password'],
                 },
-                required: ['bandwidthLimit'],
               },
             },
           },
-        },
-        responses: {
-          204: { description: 'Bandwidth limit saved.' },
-          401: { description: 'Not logged in.' },
-          404: { description: 'Client not found.' },
-        },
-      },
-    },
-    '/api/wireguard/client/{clientId}/qrcode.svg': {
-      parameters: [
-        {
-          name: 'clientId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' },
-        },
-      ],
-      get: {
-        tags: ['Client'],
-        summary: 'Render the client configuration as a QR code SVG',
-        responses: {
-          200: {
-            description: 'SVG image (512×512).',
-            content: { 'image/svg+xml': { schema: { type: 'string' } } },
+          responses: {
+            204: { description: 'Login successful. A `connect.sid` cookie is set on the response.' },
+            401: { description: 'Missing or incorrect password.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
           },
-          401: { description: 'Not logged in.' },
-          404: { description: 'Client not found.' },
         },
-      },
-    },
-    '/api/wireguard/client/{clientId}/configuration': {
-      parameters: [
-        {
-          name: 'clientId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' },
-        },
-      ],
-      get: {
-        tags: ['Client'],
-        summary: 'Download the WireGuard client `.conf` file',
-        responses: {
-          200: {
-            description: 'Plain text WireGuard config. Includes `Content-Disposition: attachment` so browsers download it.',
-            content: { 'text/plain': { schema: { type: 'string' } } },
+        delete: {
+          tags: ['Session'],
+          summary: 'Logout (destroy session)',
+          responses: {
+            204: { description: 'Session destroyed.' },
+            401: { description: 'Not logged in.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
           },
-          401: { description: 'Not logged in.' },
-          404: { description: 'Client not found.' },
+        },
+      },
+      '/api/wireguard/client': {
+        get: {
+          tags: ['Client'],
+          summary: 'List all clients with live transfer stats',
+          responses: {
+            200: {
+              description: 'Array of clients.',
+              content: { 'application/json': { schema: { type: 'array', items: { $ref: '#/components/schemas/Client' } } } },
+            },
+            401: { description: 'Not logged in.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          },
+        },
+        post: {
+          tags: ['Client'],
+          summary: 'Create a new client',
+          description: 'Generates a new WireGuard keypair and PSK, allocates the next free IPv4 in the tunnel subnet, defaults `enabled=true`, and creates an empty disabled schedule.',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: { name: { type: 'string' } },
+                  required: ['name'],
+                },
+              },
+            },
+          },
+          responses: {
+            200: {
+              description: 'Client created. The full server-side client record (including `privateKey` and `preSharedKey`) is returned.',
+              content: { 'application/json': { schema: { type: 'object' } } },
+            },
+            400: { description: 'Invalid input.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            401: { description: 'Not logged in.' },
+          },
+        },
+      },
+      '/api/wireguard/client/{clientId}': {
+        parameters: [
+          {
+            name: 'clientId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' },
+          },
+        ],
+        delete: {
+          tags: ['Client'],
+          summary: 'Delete a client',
+          responses: {
+            204: { description: 'Client removed (or did not exist).' },
+            401: { description: 'Not logged in.' },
+          },
+        },
+      },
+      '/api/wireguard/client/{clientId}/enable': {
+        parameters: [
+          {
+            name: 'clientId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' },
+          },
+        ],
+        post: {
+          tags: ['Client'],
+          summary: 'Enable a client (sets `enabled=true`)',
+          description: 'The peer will only actually be added to `wg0.conf` if the schedule (when enabled) allows the current time.',
+          responses: {
+            204: { description: 'Client enabled.' },
+            401: { description: 'Not logged in.' },
+            404: { description: 'Client not found.' },
+          },
+        },
+      },
+      '/api/wireguard/client/{clientId}/disable': {
+        parameters: [
+          {
+            name: 'clientId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' },
+          },
+        ],
+        post: {
+          tags: ['Client'],
+          summary: 'Disable a client (sets `enabled=false`)',
+          responses: {
+            204: { description: 'Client disabled. Peer removed from `wg0.conf`.' },
+            401: { description: 'Not logged in.' },
+            404: { description: 'Client not found.' },
+          },
+        },
+      },
+      '/api/wireguard/client/{clientId}/name': {
+        parameters: [
+          {
+            name: 'clientId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' },
+          },
+        ],
+        put: {
+          tags: ['Client'],
+          summary: 'Rename a client',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: { name: { type: 'string' } },
+                  required: ['name'],
+                },
+              },
+            },
+          },
+          responses: {
+            204: { description: 'Client renamed.' },
+            401: { description: 'Not logged in.' },
+            404: { description: 'Client not found.' },
+          },
+        },
+      },
+      '/api/wireguard/client/{clientId}/address': {
+        parameters: [
+          {
+            name: 'clientId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' },
+          },
+        ],
+        put: {
+          tags: ['Client'],
+          summary: 'Change a client IPv4 address inside the tunnel',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: { address: { type: 'string', example: '10.8.0.2' } },
+                  required: ['address'],
+                },
+              },
+            },
+          },
+          responses: {
+            204: { description: 'Address updated.' },
+            400: { description: 'Address is not a valid IPv4.' },
+            401: { description: 'Not logged in.' },
+            404: { description: 'Client not found.' },
+          },
+        },
+      },
+      '/api/wireguard/client/{clientId}/schedule': {
+        parameters: [
+          {
+            name: 'clientId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' },
+          },
+        ],
+        put: {
+          tags: ['Schedule'],
+          summary: 'Set the per-day connection schedule',
+          description: 'Replaces the entire schedule. Missing days are filled with `{ active: false, start: "00:00", end: "23:59" }`. The server normalizes time strings to `HH:MM` and rejects unknown timezones (falls back to "UTC"). A 60-second background ticker rebuilds `wg0.conf` so peers are removed/restored as schedule boundaries pass.',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: { schedule: { $ref: '#/components/schemas/Schedule' } },
+                  required: ['schedule'],
+                },
+              },
+            },
+          },
+          responses: {
+            204: { description: 'Schedule saved.' },
+            401: { description: 'Not logged in.' },
+            404: { description: 'Client not found.' },
+          },
+        },
+      },
+      '/api/wireguard/client/{clientId}/max-devices': {
+        parameters: [
+          {
+            name: 'clientId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' },
+          },
+        ],
+        put: {
+          tags: ['Limits'],
+          summary: 'Set the maximum concurrent devices allowed for this config',
+          description: 'WireGuard cannot natively reject a second device using the same key. The server detects concurrent use by polling `wg show wg0 dump` every 10 seconds and tracking distinct peer endpoints with a fresh handshake (within the last ~3 minutes). If the count exceeds `maxDevices`, the peer is auto-disabled and `deviceLimitExceededAt` is set. Setting `maxDevices = 0` disables the limit. Re-enabling the client manually clears the tracking.',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: { maxDevices: { type: 'integer', minimum: 0, maximum: 99 } },
+                  required: ['maxDevices'],
+                },
+              },
+            },
+          },
+          responses: {
+            204: { description: 'Limit saved.' },
+            401: { description: 'Not logged in.' },
+            404: { description: 'Client not found.' },
+          },
+        },
+      },
+      '/api/wireguard/client/{clientId}/bandwidth-limit': {
+        parameters: [
+          {
+            name: 'clientId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' },
+          },
+        ],
+        put: {
+          tags: ['Limits'],
+          summary: 'Set the bandwidth cap (Mbps) for this peer',
+          description: 'Applies a symmetric bandwidth cap using Linux Traffic Control on the `wg0` interface. Download (server → client) is shaped via HTB classes on egress; upload (client → server) is enforced via an ingress `police` filter that drops excess. Setting `bandwidthLimit = 0` removes the cap. Rules are rebuilt every save and on the schedule ticker so they follow enable/schedule changes. Requires `tc` (`iproute2-tc`) on the host.',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    bandwidthLimit: {
+                      type: 'integer', minimum: 0, maximum: 10000, description: 'Mbps',
+                    },
+                  },
+                  required: ['bandwidthLimit'],
+                },
+              },
+            },
+          },
+          responses: {
+            204: { description: 'Bandwidth limit saved.' },
+            401: { description: 'Not logged in.' },
+            404: { description: 'Client not found.' },
+          },
+        },
+      },
+      '/api/wireguard/client/{clientId}/qrcode.svg': {
+        parameters: [
+          {
+            name: 'clientId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' },
+          },
+        ],
+        get: {
+          tags: ['Client'],
+          summary: 'Render the client configuration as a QR code SVG',
+          responses: {
+            200: {
+              description: 'SVG image (512×512).',
+              content: { 'image/svg+xml': { schema: { type: 'string' } } },
+            },
+            401: { description: 'Not logged in.' },
+            404: { description: 'Client not found.' },
+          },
+        },
+      },
+      '/api/wireguard/client/{clientId}/configuration': {
+        parameters: [
+          {
+            name: 'clientId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' },
+          },
+        ],
+        get: {
+          tags: ['Client'],
+          summary: 'Download the WireGuard client `.conf` file',
+          responses: {
+            200: {
+              description: 'Plain text WireGuard config. Includes `Content-Disposition: attachment` so browsers download it.',
+              content: { 'text/plain': { schema: { type: 'string' } } },
+            },
+            401: { description: 'Not logged in.' },
+            404: { description: 'Client not found.' },
+          },
         },
       },
     },
-  },
-  security: [{ sessionCookie: [] }],
-  tags: [
-    { name: 'Meta', description: 'Server metadata and discovery.' },
-    { name: 'Session', description: 'Authentication.' },
-    { name: 'Client', description: 'WireGuard peer management.' },
-    { name: 'Schedule', description: 'Per-day active hours per client.' },
-    { name: 'Limits', description: 'Per-config limits such as max concurrent devices.' },
-  ],
-};
+    security: [{ sessionCookie: [] }],
+    tags: [
+      { name: 'Meta', description: 'Server metadata and discovery.' },
+      { name: 'Session', description: 'Authentication.' },
+      { name: 'Client', description: 'WireGuard peer management.' },
+      { name: 'Schedule', description: 'Per-day active hours per client.' },
+      { name: 'Limits', description: 'Per-config limits such as max concurrent devices.' },
+      { name: 'Settings', description: 'Site branding and panel-wide settings.' },
+    ],
+  };
+}
+
+module.exports = buildSpec;

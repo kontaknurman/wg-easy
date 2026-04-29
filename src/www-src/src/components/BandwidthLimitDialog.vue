@@ -99,7 +99,7 @@ function save() {
           <p>
             Requires <code class="rounded bg-background px-1 py-0.5 text-[11px]">tc</code>
             (<code class="rounded bg-background px-1 py-0.5 text-[11px]">iproute2-tc</code>) on the host. Limits do
-            not survive interface restart unless wg-easy is the one bringing it up — rules are reapplied on every
+            not survive interface restart unless the panel is the one bringing it up — rules are reapplied on every
             config change and on the schedule ticker.
           </p>
         </div>
