@@ -45,6 +45,7 @@ const endpoints = {
   ],
   limits: [
     { method: 'PUT', path: '/api/wireguard/client/:id/max-devices', desc: 'Set the maximum concurrent devices. 0 disables enforcement. When exceeded, the peer is auto-disabled and deviceLimitExceededAt is set.' },
+    { method: 'PUT', path: '/api/wireguard/client/:id/bandwidth-limit', desc: 'Set per-peer bandwidth cap in Mbps (0 = unlimited). Applied with Linux Traffic Control (tc HTB egress + ingress police).' },
   ],
 };
 
@@ -146,6 +147,31 @@ curl -b cookies.txt http://localhost:51821/api/wireguard/client</pre>
             </CardContent>
           </Card>
 
+          <Card id="bandwidth-limit-detail">
+            <CardHeader>
+              <CardTitle>Bandwidth limit (per-peer Mbps)</CardTitle>
+              <CardDescription>How wg-easy throttles a peer using Linux Traffic Control.</CardDescription>
+            </CardHeader>
+            <CardContent class="space-y-3 text-sm text-muted-foreground">
+              <p>
+                For each peer with <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">bandwidthLimit &gt; 0</code> the server installs:
+              </p>
+              <ul class="list-disc pl-5 space-y-1.5">
+                <li>An HTB class on <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">wg0</code> egress with <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">rate=ceil=Nmbit</code> matched on the peer's tunnel IP. This shapes server → client traffic (download for the client).</li>
+                <li>An ingress <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">police</code> filter on <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">wg0</code> matched on source IP that drops packets above the configured rate. This caps client → server traffic (upload).</li>
+                <li>An <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">sfq</code> child qdisc per class for fair queuing inside the limit.</li>
+              </ul>
+              <p>Rules are reapplied on every save and on the schedule ticker, so they follow enable/schedule/limit changes. Setting <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">bandwidthLimit = 0</code> removes the cap on the next save.</p>
+              <p class="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-300">
+                Requires <code class="rounded bg-background/40 px-1 py-0.5 text-[11px]">tc</code> on the host
+                (<code class="rounded bg-background/40 px-1 py-0.5 text-[11px]">iproute2-tc</code> on Alpine, included in the wg-easy Dockerfile). Without it the API still accepts the value but rules silently won't apply.
+              </p>
+              <pre class="rounded-lg bg-zinc-900 p-4 text-xs leading-relaxed text-zinc-100 overflow-x-auto">curl -b cookies.txt -X PUT http://localhost:51821/api/wireguard/client/CLIENT_ID/bandwidth-limit \
+  -H "Content-Type: application/json" \
+  -d '{"bandwidthLimit": 25}'</pre>
+            </CardContent>
+          </Card>
+
           <Card id="device-limit-detail">
             <CardHeader>
               <CardTitle>Device limit (concurrent peers)</CardTitle>
@@ -224,6 +250,7 @@ curl -b cookies.txt http://localhost:51821/api/wireguard/client</pre>
                       <tr><td class="px-3 py-2 font-mono text-xs">maxDevices</td><td class="px-3 py-2 text-muted-foreground">int (0–99)</td><td class="px-3 py-2 text-muted-foreground">Max concurrent devices; 0 disables the limit.</td></tr>
                       <tr><td class="px-3 py-2 font-mono text-xs">activeDeviceCount</td><td class="px-3 py-2 text-muted-foreground">int</td><td class="px-3 py-2 text-muted-foreground">Distinct endpoints currently tracked.</td></tr>
                       <tr><td class="px-3 py-2 font-mono text-xs">deviceLimitExceededAt</td><td class="px-3 py-2 text-muted-foreground">datetime|null</td><td class="px-3 py-2 text-muted-foreground">When the peer was last auto-disabled by the limit.</td></tr>
+                      <tr><td class="px-3 py-2 font-mono text-xs">bandwidthLimit</td><td class="px-3 py-2 text-muted-foreground">int (0–10000)</td><td class="px-3 py-2 text-muted-foreground">Per-peer bandwidth cap in Mbps; 0 = unlimited.</td></tr>
                       <tr><td class="px-3 py-2 font-mono text-xs">latestHandshakeAt</td><td class="px-3 py-2 text-muted-foreground">datetime|null</td><td class="px-3 py-2 text-muted-foreground">Last handshake timestamp.</td></tr>
                       <tr><td class="px-3 py-2 font-mono text-xs">transferRx, transferTx</td><td class="px-3 py-2 text-muted-foreground">int|null</td><td class="px-3 py-2 text-muted-foreground">Cumulative bytes.</td></tr>
                     </tbody>

@@ -69,6 +69,9 @@ const clientSchema = {
     },
     activeDeviceCount: { type: 'integer', description: 'Distinct WireGuard endpoints with a fresh handshake (last ~3 minutes) currently using this config.' },
     deviceLimitExceededAt: { type: ['string', 'null'], format: 'date-time', description: 'Set when the peer was auto-disabled because more than `maxDevices` endpoints were detected. Null when never tripped or after manual re-enable.' },
+    bandwidthLimit: {
+      type: 'integer', minimum: 0, maximum: 10000, description: 'Per-peer bandwidth cap in Mbps applied symmetrically (download via egress HTB on wg0, upload via ingress police). 0 disables the cap.',
+    },
   },
   required: ['id', 'name', 'enabled', 'address', 'publicKey', 'createdAt', 'updatedAt'],
 };
@@ -370,6 +373,39 @@ module.exports = {
         },
         responses: {
           204: { description: 'Limit saved.' },
+          401: { description: 'Not logged in.' },
+          404: { description: 'Client not found.' },
+        },
+      },
+    },
+    '/api/wireguard/client/{clientId}/bandwidth-limit': {
+      parameters: [
+        {
+          name: 'clientId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' },
+        },
+      ],
+      put: {
+        tags: ['Limits'],
+        summary: 'Set the bandwidth cap (Mbps) for this peer',
+        description: 'Applies a symmetric bandwidth cap using Linux Traffic Control on the `wg0` interface. Download (server → client) is shaped via HTB classes on egress; upload (client → server) is enforced via an ingress `police` filter that drops excess. Setting `bandwidthLimit = 0` removes the cap. Rules are rebuilt every save and on the schedule ticker so they follow enable/schedule changes. Requires `tc` (`iproute2-tc`) on the host.',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  bandwidthLimit: {
+                    type: 'integer', minimum: 0, maximum: 10000, description: 'Mbps',
+                  },
+                },
+                required: ['bandwidthLimit'],
+              },
+            },
+          },
+        },
+        responses: {
+          204: { description: 'Bandwidth limit saved.' },
           401: { description: 'Not logged in.' },
           404: { description: 'Client not found.' },
         },

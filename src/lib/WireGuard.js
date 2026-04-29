@@ -134,11 +134,18 @@ function isClientActiveBySchedule(client, now = new Date()) {
 const MAX_DEVICES_CAP = 99;
 const DEVICE_HANDSHAKE_FRESH_MS = 3 * 60 * 1000;
 const DEVICE_ENDPOINT_TTL_MS = 3 * 60 * 1000;
+const BANDWIDTH_LIMIT_CAP_MBPS = 10000;
 
 function normalizeMaxDevices(value) {
   const n = parseInt(value, 10);
   if (Number.isNaN(n) || n < 0) return 0;
   return Math.min(n, MAX_DEVICES_CAP);
+}
+
+function normalizeBandwidthLimit(value) {
+  const n = parseInt(value, 10);
+  if (Number.isNaN(n) || n < 0) return 0;
+  return Math.min(n, BANDWIDTH_LIMIT_CAP_MBPS);
 }
 
 module.exports = class WireGuard {
@@ -197,9 +204,19 @@ module.exports = class WireGuard {
                 migrated = true;
               }
             }
+            if (client.bandwidthLimit === undefined) {
+              client.bandwidthLimit = 0;
+              migrated = true;
+            } else {
+              const b = normalizeBandwidthLimit(client.bandwidthLimit);
+              if (b !== client.bandwidthLimit) {
+                client.bandwidthLimit = b;
+                migrated = true;
+              }
+            }
           }
         }
-        if (migrated) debug('Migrated existing clients to include schedule + maxDevices.');
+        if (migrated) debug('Migrated existing clients to include schedule + maxDevices + bandwidthLimit.');
 
         await this.__saveConfig(config);
         await Util.exec('wg-quick down wg0').catch(() => { });
@@ -215,6 +232,9 @@ module.exports = class WireGuard {
         // await Util.exec('iptables -A FORWARD -i wg0 -j ACCEPT');
         // await Util.exec('iptables -A FORWARD -o wg0 -j ACCEPT');
         await this.__syncConfig();
+        await this.__applyTrafficControl(config).catch(err => {
+          debug(`tc apply failed at startup (non-fatal): ${err && err.message ? err.message : err}`);
+        });
 
         return config;
       });
@@ -227,6 +247,9 @@ module.exports = class WireGuard {
     const config = await this.getConfig();
     await this.__saveConfig(config);
     await this.__syncConfig();
+    await this.__applyTrafficControl(config).catch(err => {
+      debug(`tc apply failed (non-fatal): ${err && err.message ? err.message : err}`);
+    });
   }
 
   __buildWgConfText(config) {
@@ -287,6 +310,9 @@ AllowedIPs = ${client.address}/32`;
       mode: 0o600,
     });
     await this.__syncConfig();
+    await this.__applyTrafficControl(config).catch(err => {
+      debug(`tc apply failed (non-fatal): ${err && err.message ? err.message : err}`);
+    });
   }
 
   startScheduler() {
@@ -324,6 +350,7 @@ AllowedIPs = ${client.address}/32`;
         maxDevices: client.maxDevices || 0,
         activeDeviceCount,
         deviceLimitExceededAt: client.deviceLimitExceededAt ? new Date(client.deviceLimitExceededAt) : null,
+        bandwidthLimit: client.bandwidthLimit || 0,
 
         persistentKeepalive: null,
         latestHandshakeAt: null,
@@ -447,6 +474,7 @@ Endpoint = ${WG_HOST}:${WG_PORT}`;
       schedule: defaultSchedule(),
       maxDevices: 0,
       deviceLimitExceededAt: null,
+      bandwidthLimit: 0,
     };
 
     config.clients[clientId] = client;
@@ -526,6 +554,60 @@ Endpoint = ${WG_HOST}:${WG_PORT}`;
     if (this.__deviceTracking) delete this.__deviceTracking[clientId];
 
     await this.saveConfig();
+  }
+
+  async updateClientBandwidthLimit({ clientId, bandwidthLimit }) {
+    const client = await this.getClient({ clientId });
+
+    client.bandwidthLimit = normalizeBandwidthLimit(bandwidthLimit);
+    client.updatedAt = new Date();
+
+    await this.saveConfig();
+  }
+
+  async __applyTrafficControl(config) {
+    if (process.platform !== 'linux') return;
+
+    // Wipe any existing rules. Both calls fail when the qdisc isn't there yet,
+    // so we swallow the errors.
+    await Util.exec('tc qdisc del dev wg0 root', { log: false }).catch(() => {});
+    await Util.exec('tc qdisc del dev wg0 ingress', { log: false }).catch(() => {});
+
+    const peers = Object.values(config.clients).filter(c => {
+      if (!c.enabled) return false;
+      if (!c.bandwidthLimit || c.bandwidthLimit <= 0) return false;
+      if (!isClientActiveBySchedule(c)) return false;
+      return true;
+    });
+    if (peers.length === 0) return;
+
+    try {
+      // Egress (server → client = client download): root HTB with default class
+      await Util.exec('tc qdisc add dev wg0 root handle 1: htb default 999', { log: false });
+      await Util.exec('tc class add dev wg0 parent 1: classid 1:999 htb rate 10gbit ceil 10gbit', { log: false });
+      // Ingress (client → server = client upload) needs a separate ingress qdisc
+      await Util.exec('tc qdisc add dev wg0 handle ffff: ingress', { log: false });
+    } catch (err) {
+      debug(`tc setup failed: ${err && err.message}`);
+      return;
+    }
+
+    for (const client of peers) {
+      const lastOctet = parseInt(String(client.address).split('.').pop(), 10);
+      if (Number.isNaN(lastOctet) || lastOctet < 2 || lastOctet > 254) continue;
+      const classid = `1:${lastOctet}`;
+      const rate = `${client.bandwidthLimit}mbit`;
+      const burst = `${Math.max(15, client.bandwidthLimit * 4)}k`;
+      try {
+        await Util.exec(`tc class add dev wg0 parent 1: classid ${classid} htb rate ${rate} ceil ${rate}`, { log: false });
+        await Util.exec(`tc qdisc add dev wg0 parent ${classid} handle ${lastOctet}: sfq perturb 10`, { log: false });
+        await Util.exec(`tc filter add dev wg0 protocol ip parent 1: prio 1 u32 match ip dst ${client.address}/32 flowid ${classid}`, { log: false });
+        await Util.exec(`tc filter add dev wg0 parent ffff: protocol ip prio 1 u32 match ip src ${client.address}/32 police rate ${rate} burst ${burst} drop flowid :1`, { log: false });
+      } catch (err) {
+        debug(`tc apply failed for ${client.name}: ${err && err.message}`);
+      }
+    }
+    debug(`Traffic control applied to ${peers.length} peer(s).`);
   }
 
   async monitorDeviceConnections() {

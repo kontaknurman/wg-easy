@@ -148,6 +148,11 @@ module.exports = class Server {
         const { maxDevices } = req.body;
         return WireGuard.updateClientMaxDevices({ clientId, maxDevices });
       }))
+      .put('/api/wireguard/client/:clientId/bandwidth-limit', Util.promisify(async req => {
+        const { clientId } = req.params;
+        const { bandwidthLimit } = req.body;
+        return WireGuard.updateClientBandwidthLimit({ clientId, bandwidthLimit });
+      }))
 
       // SPA fallback: any non-API GET that isn't a static file falls back to index.html
       // so vue-router (history mode) can handle /docs, /login, etc.

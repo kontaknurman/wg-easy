@@ -13,6 +13,7 @@ import CreateClientDialog from '@/components/CreateClientDialog.vue';
 import DeleteClientDialog from '@/components/DeleteClientDialog.vue';
 import ScheduleDialog from '@/components/ScheduleDialog.vue';
 import DeviceLimitDialog from '@/components/DeviceLimitDialog.vue';
+import BandwidthLimitDialog from '@/components/BandwidthLimitDialog.vue';
 import QrDialog from '@/components/QrDialog.vue';
 import { HugeiconsIcon } from '@hugeicons/vue';
 import { UserAdd01Icon, UserMultiple02Icon } from '@hugeicons/core-free-icons';
@@ -28,6 +29,7 @@ const createOpen = ref(false);
 const deleteClient = ref(null);
 const scheduleClient = ref(null);
 const deviceLimitClient = ref(null);
+const bandwidthLimitClient = ref(null);
 const qrClient = ref(null);
 
 let pollTimer = null;
@@ -98,6 +100,19 @@ async function saveDeviceLimit(maxDevices) {
   } catch (err) { toastError(err); }
 }
 
+async function saveBandwidthLimit(bandwidthLimit) {
+  if (!bandwidthLimitClient.value) return;
+  try {
+    await api.updateClientBandwidthLimit({ clientId: bandwidthLimitClient.value.id, bandwidthLimit });
+    toast({
+      title: bandwidthLimit > 0 ? 'Bandwidth limit saved' : 'Bandwidth limit removed',
+      description: bandwidthLimit > 0 ? `Capped at ${bandwidthLimit} Mbps.` : undefined,
+    });
+    bandwidthLimitClient.value = null;
+    await refresh();
+  } catch (err) { toastError(err); }
+}
+
 onMounted(() => {
   refresh();
   pollTimer = setInterval(refresh, 2000);
@@ -153,6 +168,7 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer); });
             v-for="client in clients" :key="client.id" :client="client"
             @changed="refresh" @schedule="scheduleClient = $event"
             @device-limit="deviceLimitClient = $event"
+            @bandwidth-limit="bandwidthLimitClient = $event"
             @delete="deleteClient = $event" @qr="qrClient = $event"
             @error="toastError" />
         </div>
@@ -169,6 +185,9 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer); });
     <DeviceLimitDialog
       :open="!!deviceLimitClient" :client="deviceLimitClient"
       @update:open="(v) => { if (!v) deviceLimitClient = null }" @save="saveDeviceLimit" />
+    <BandwidthLimitDialog
+      :open="!!bandwidthLimitClient" :client="bandwidthLimitClient"
+      @update:open="(v) => { if (!v) bandwidthLimitClient = null }" @save="saveBandwidthLimit" />
     <QrDialog
       :open="!!qrClient" :client="qrClient"
       @update:open="(v) => { if (!v) qrClient = null }" />
