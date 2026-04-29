@@ -64,6 +64,14 @@ const clientSchema = {
     transferTx: { type: ['integer', 'null'], description: 'Bytes sent to the peer (server download).' },
     schedule: { $ref: '#/components/schemas/Schedule' },
     scheduleActive: { type: 'boolean', description: 'Computed: whether the schedule currently allows the peer right now. True when `schedule.enabled` is false (no schedule restriction).' },
+    maxDevices: {
+      type: 'integer', minimum: 0, maximum: 99, description: 'Maximum concurrent devices that may share this config. 0 disables the limit (default).',
+    },
+    activeDeviceCount: { type: 'integer', description: 'Distinct WireGuard endpoints with a fresh handshake (last ~3 minutes) currently using this config.' },
+    deviceLimitExceededAt: { type: ['string', 'null'], format: 'date-time', description: 'Set when the peer was auto-disabled because more than `maxDevices` endpoints were detected. Null when never tripped or after manual re-enable.' },
+    bandwidthLimit: {
+      type: 'integer', minimum: 0, maximum: 10000, description: 'Per-peer bandwidth cap in Mbps applied symmetrically (download via egress HTB on wg0, upload via ingress police). 0 disables the cap.',
+    },
   },
   required: ['id', 'name', 'enabled', 'address', 'publicKey', 'createdAt', 'updatedAt'],
 };
@@ -341,6 +349,68 @@ module.exports = {
         },
       },
     },
+    '/api/wireguard/client/{clientId}/max-devices': {
+      parameters: [
+        {
+          name: 'clientId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' },
+        },
+      ],
+      put: {
+        tags: ['Limits'],
+        summary: 'Set the maximum concurrent devices allowed for this config',
+        description: 'WireGuard cannot natively reject a second device using the same key. wg-easy detects concurrent use by polling `wg show wg0 dump` every 10 seconds and tracking distinct peer endpoints with a fresh handshake (within the last ~3 minutes). If the count exceeds `maxDevices`, the peer is auto-disabled and `deviceLimitExceededAt` is set. Setting `maxDevices = 0` disables the limit. Re-enabling the client manually clears the tracking.',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: { maxDevices: { type: 'integer', minimum: 0, maximum: 99 } },
+                required: ['maxDevices'],
+              },
+            },
+          },
+        },
+        responses: {
+          204: { description: 'Limit saved.' },
+          401: { description: 'Not logged in.' },
+          404: { description: 'Client not found.' },
+        },
+      },
+    },
+    '/api/wireguard/client/{clientId}/bandwidth-limit': {
+      parameters: [
+        {
+          name: 'clientId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' },
+        },
+      ],
+      put: {
+        tags: ['Limits'],
+        summary: 'Set the bandwidth cap (Mbps) for this peer',
+        description: 'Applies a symmetric bandwidth cap using Linux Traffic Control on the `wg0` interface. Download (server → client) is shaped via HTB classes on egress; upload (client → server) is enforced via an ingress `police` filter that drops excess. Setting `bandwidthLimit = 0` removes the cap. Rules are rebuilt every save and on the schedule ticker so they follow enable/schedule changes. Requires `tc` (`iproute2-tc`) on the host.',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  bandwidthLimit: {
+                    type: 'integer', minimum: 0, maximum: 10000, description: 'Mbps',
+                  },
+                },
+                required: ['bandwidthLimit'],
+              },
+            },
+          },
+        },
+        responses: {
+          204: { description: 'Bandwidth limit saved.' },
+          401: { description: 'Not logged in.' },
+          404: { description: 'Client not found.' },
+        },
+      },
+    },
     '/api/wireguard/client/{clientId}/qrcode.svg': {
       parameters: [
         {
@@ -386,5 +456,6 @@ module.exports = {
     { name: 'Session', description: 'Authentication.' },
     { name: 'Client', description: 'WireGuard peer management.' },
     { name: 'Schedule', description: 'Per-day active hours per client.' },
+    { name: 'Limits', description: 'Per-config limits such as max concurrent devices.' },
   ],
 };

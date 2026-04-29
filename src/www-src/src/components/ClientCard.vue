@@ -3,7 +3,7 @@ import { ref, computed, nextTick } from 'vue';
 import { HugeiconsIcon } from '@hugeicons/vue';
 import {
   UserCircleIcon, Edit02Icon, Clock01Icon, QrCode01Icon, Download04Icon,
-  Delete02Icon, ArrowDown01Icon, ArrowUp01Icon, Tick02Icon, Cancel01Icon,
+  Delete02Icon, ArrowDown01Icon, ArrowUp01Icon, Shield01Icon, FlashIcon,
 } from '@hugeicons/core-free-icons';
 import Switch from '@/components/ui/Switch.vue';
 import Button from '@/components/ui/Button.vue';
@@ -15,7 +15,7 @@ import { formatBytes, formatDateTime, formatRelative } from '@/lib/utils';
 const props = defineProps({
   client: { type: Object, required: true },
 });
-const emit = defineEmits(['changed', 'schedule', 'qr', 'delete']);
+const emit = defineEmits(['changed', 'schedule', 'qr', 'delete', 'device-limit', 'bandwidth-limit', 'error']);
 
 const editingName = ref(false);
 const editingAddress = ref(false);
@@ -31,6 +31,9 @@ const isOnline = computed(() => {
 
 const scheduleEnabled = computed(() => props.client.schedule?.enabled);
 const scheduleActive = computed(() => props.client.scheduleActive !== false);
+const deviceLimitOn = computed(() => (props.client.maxDevices || 0) > 0);
+const deviceLimitTripped = computed(() => !!props.client.deviceLimitExceededAt && !props.client.enabled);
+const bandwidthLimitOn = computed(() => (props.client.bandwidthLimit || 0) > 0);
 
 async function startEditName() {
   nameDraft.value = props.client.name;
@@ -100,9 +103,18 @@ async function toggleEnabled(value) {
             <HugeiconsIcon :icon="Edit02Icon" :size="14" :stroke-width="2"
               class="shrink-0 opacity-0 transition-opacity group-hover/edit:opacity-100 sm:opacity-0 sm:group-hover:opacity-50" />
           </button>
-          <Badge v-if="!client.enabled" variant="secondary" class="shrink-0">Disabled</Badge>
+          <Badge v-if="deviceLimitTripped" variant="destructive" class="shrink-0">Limit tripped</Badge>
+          <Badge v-else-if="!client.enabled" variant="secondary" class="shrink-0">Disabled</Badge>
           <Badge v-else-if="scheduleEnabled && !scheduleActive" variant="warning" class="shrink-0">Off-hours</Badge>
           <Badge v-else-if="scheduleEnabled && scheduleActive" variant="success" class="shrink-0">Scheduled</Badge>
+          <Badge v-if="deviceLimitOn && !deviceLimitTripped" variant="outline" class="shrink-0">
+            <HugeiconsIcon :icon="Shield01Icon" :size="11" :stroke-width="2" class="mr-1" />
+            Max {{ client.maxDevices }}
+          </Badge>
+          <Badge v-if="bandwidthLimitOn" variant="outline" class="shrink-0">
+            <HugeiconsIcon :icon="FlashIcon" :size="11" :stroke-width="2" class="mr-1" />
+            {{ client.bandwidthLimit }} Mbps
+          </Badge>
         </div>
 
         <div class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
@@ -137,6 +149,21 @@ async function toggleEnabled(value) {
         class="relative h-8 w-8" @click="$emit('schedule', client)">
         <HugeiconsIcon :icon="Clock01Icon" :size="16" :stroke-width="2" />
         <span v-if="scheduleEnabled" :class="['absolute right-1 top-1 h-1.5 w-1.5 rounded-full', scheduleActive ? 'bg-emerald-500' : 'bg-muted-foreground/40']"></span>
+      </Button>
+
+      <Button variant="ghost" size="icon"
+        :title="deviceLimitOn ? `Device limit: ${client.maxDevices} (${client.activeDeviceCount || 0} tracked)` : 'Device limit'"
+        class="relative h-8 w-8" @click="$emit('device-limit', client)">
+        <HugeiconsIcon :icon="Shield01Icon" :size="16" :stroke-width="2" />
+        <span v-if="deviceLimitTripped" class="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-destructive"></span>
+        <span v-else-if="deviceLimitOn" class="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
+      </Button>
+
+      <Button variant="ghost" size="icon"
+        :title="bandwidthLimitOn ? `Bandwidth: ${client.bandwidthLimit} Mbps` : 'Bandwidth limit'"
+        class="relative h-8 w-8" @click="$emit('bandwidth-limit', client)">
+        <HugeiconsIcon :icon="FlashIcon" :size="16" :stroke-width="2" />
+        <span v-if="bandwidthLimitOn" class="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
       </Button>
 
       <Button variant="ghost" size="icon" class="h-8 w-8" title="QR code" @click="$emit('qr', client)">

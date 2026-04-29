@@ -20,8 +20,10 @@ COPY --from=build_node_modules /app /app
 RUN mv /app/node_modules /node_modules
 
 # Install Linux packages
+# - iproute2-tc: Linux Traffic Control (`tc`) for per-peer bandwidth limits
 RUN apk add -U --no-cache \
   iptables \
+  iproute2-tc \
   wireguard-tools \
   dumb-init
 

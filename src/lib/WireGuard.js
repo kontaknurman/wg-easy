@@ -131,6 +131,23 @@ function isClientActiveBySchedule(client, now = new Date()) {
   return cur >= startMin || cur <= endMin;
 }
 
+const MAX_DEVICES_CAP = 99;
+const DEVICE_HANDSHAKE_FRESH_MS = 3 * 60 * 1000;
+const DEVICE_ENDPOINT_TTL_MS = 3 * 60 * 1000;
+const BANDWIDTH_LIMIT_CAP_MBPS = 10000;
+
+function normalizeMaxDevices(value) {
+  const n = parseInt(value, 10);
+  if (Number.isNaN(n) || n < 0) return 0;
+  return Math.min(n, MAX_DEVICES_CAP);
+}
+
+function normalizeBandwidthLimit(value) {
+  const n = parseInt(value, 10);
+  if (Number.isNaN(n) || n < 0) return 0;
+  return Math.min(n, BANDWIDTH_LIMIT_CAP_MBPS);
+}
+
 module.exports = class WireGuard {
 
   async getConfig() {
@@ -177,9 +194,29 @@ module.exports = class WireGuard {
                 migrated = true;
               }
             }
+            if (client.maxDevices === undefined) {
+              client.maxDevices = 0;
+              migrated = true;
+            } else {
+              const m = normalizeMaxDevices(client.maxDevices);
+              if (m !== client.maxDevices) {
+                client.maxDevices = m;
+                migrated = true;
+              }
+            }
+            if (client.bandwidthLimit === undefined) {
+              client.bandwidthLimit = 0;
+              migrated = true;
+            } else {
+              const b = normalizeBandwidthLimit(client.bandwidthLimit);
+              if (b !== client.bandwidthLimit) {
+                client.bandwidthLimit = b;
+                migrated = true;
+              }
+            }
           }
         }
-        if (migrated) debug('Migrated existing clients to include schedule field.');
+        if (migrated) debug('Migrated existing clients to include schedule + maxDevices + bandwidthLimit.');
 
         await this.__saveConfig(config);
         await Util.exec('wg-quick down wg0').catch(() => { });
@@ -195,6 +232,9 @@ module.exports = class WireGuard {
         // await Util.exec('iptables -A FORWARD -i wg0 -j ACCEPT');
         // await Util.exec('iptables -A FORWARD -o wg0 -j ACCEPT');
         await this.__syncConfig();
+        await this.__applyTrafficControl(config).catch(err => {
+          debug(`tc apply failed at startup (non-fatal): ${err && err.message ? err.message : err}`);
+        });
 
         return config;
       });
@@ -207,6 +247,9 @@ module.exports = class WireGuard {
     const config = await this.getConfig();
     await this.__saveConfig(config);
     await this.__syncConfig();
+    await this.__applyTrafficControl(config).catch(err => {
+      debug(`tc apply failed (non-fatal): ${err && err.message ? err.message : err}`);
+    });
   }
 
   __buildWgConfText(config) {
@@ -267,6 +310,9 @@ AllowedIPs = ${client.address}/32`;
       mode: 0o600,
     });
     await this.__syncConfig();
+    await this.__applyTrafficControl(config).catch(err => {
+      debug(`tc apply failed (non-fatal): ${err && err.message ? err.message : err}`);
+    });
   }
 
   startScheduler() {
@@ -277,28 +323,41 @@ AllowedIPs = ${client.address}/32`;
         debug(`Schedule tick error: ${err && err.message ? err.message : err}`);
       });
     }, 60 * 1000);
-    debug('Schedule ticker started (60s interval).');
+    setInterval(() => {
+      this.monitorDeviceConnections().catch(err => {
+        debug(`Device monitor tick error: ${err && err.message ? err.message : err}`);
+      });
+    }, 10 * 1000);
+    debug('Schedule (60s) and device monitor (10s) tickers started.');
   }
 
   async getClients() {
     const config = await this.getConfig();
-    const clients = Object.entries(config.clients).map(([clientId, client]) => ({
-      id: clientId,
-      name: client.name,
-      enabled: client.enabled,
-      address: client.address,
-      publicKey: client.publicKey,
-      createdAt: new Date(client.createdAt),
-      updatedAt: new Date(client.updatedAt),
-      allowedIPs: client.allowedIPs,
-      schedule: client.schedule || defaultSchedule(),
-      scheduleActive: isClientActiveBySchedule(client),
+    const clients = Object.entries(config.clients).map(([clientId, client]) => {
+      const tracking = this.__deviceTracking && this.__deviceTracking[clientId];
+      const activeDeviceCount = tracking ? Object.keys(tracking.endpoints).length : 0;
+      return {
+        id: clientId,
+        name: client.name,
+        enabled: client.enabled,
+        address: client.address,
+        publicKey: client.publicKey,
+        createdAt: new Date(client.createdAt),
+        updatedAt: new Date(client.updatedAt),
+        allowedIPs: client.allowedIPs,
+        schedule: client.schedule || defaultSchedule(),
+        scheduleActive: isClientActiveBySchedule(client),
+        maxDevices: client.maxDevices || 0,
+        activeDeviceCount,
+        deviceLimitExceededAt: client.deviceLimitExceededAt ? new Date(client.deviceLimitExceededAt) : null,
+        bandwidthLimit: client.bandwidthLimit || 0,
 
-      persistentKeepalive: null,
-      latestHandshakeAt: null,
-      transferRx: null,
-      transferTx: null,
-    }));
+        persistentKeepalive: null,
+        latestHandshakeAt: null,
+        transferRx: null,
+        transferTx: null,
+      };
+    });
 
     // Loop WireGuard status
     const dump = await Util.exec('wg show wg0 dump', {
@@ -413,6 +472,9 @@ Endpoint = ${WG_HOST}:${WG_PORT}`;
 
       enabled: true,
       schedule: defaultSchedule(),
+      maxDevices: 0,
+      deviceLimitExceededAt: null,
+      bandwidthLimit: 0,
     };
 
     config.clients[clientId] = client;
@@ -427,6 +489,7 @@ Endpoint = ${WG_HOST}:${WG_PORT}`;
 
     if (config.clients[clientId]) {
       delete config.clients[clientId];
+      if (this.__deviceTracking) delete this.__deviceTracking[clientId];
       await this.saveConfig();
     }
   }
@@ -436,6 +499,8 @@ Endpoint = ${WG_HOST}:${WG_PORT}`;
 
     client.enabled = true;
     client.updatedAt = new Date();
+    client.deviceLimitExceededAt = null;
+    if (this.__deviceTracking) delete this.__deviceTracking[clientId];
 
     await this.saveConfig();
   }
@@ -478,6 +543,135 @@ Endpoint = ${WG_HOST}:${WG_PORT}`;
     client.updatedAt = new Date();
 
     await this.saveConfig();
+  }
+
+  async updateClientMaxDevices({ clientId, maxDevices }) {
+    const client = await this.getClient({ clientId });
+
+    client.maxDevices = normalizeMaxDevices(maxDevices);
+    client.updatedAt = new Date();
+    client.deviceLimitExceededAt = null;
+    if (this.__deviceTracking) delete this.__deviceTracking[clientId];
+
+    await this.saveConfig();
+  }
+
+  async updateClientBandwidthLimit({ clientId, bandwidthLimit }) {
+    const client = await this.getClient({ clientId });
+
+    client.bandwidthLimit = normalizeBandwidthLimit(bandwidthLimit);
+    client.updatedAt = new Date();
+
+    await this.saveConfig();
+  }
+
+  async __applyTrafficControl(config) {
+    if (process.platform !== 'linux') return;
+
+    // Wipe any existing rules. Both calls fail when the qdisc isn't there yet,
+    // so we swallow the errors.
+    await Util.exec('tc qdisc del dev wg0 root', { log: false }).catch(() => {});
+    await Util.exec('tc qdisc del dev wg0 ingress', { log: false }).catch(() => {});
+
+    const peers = Object.values(config.clients).filter(c => {
+      if (!c.enabled) return false;
+      if (!c.bandwidthLimit || c.bandwidthLimit <= 0) return false;
+      if (!isClientActiveBySchedule(c)) return false;
+      return true;
+    });
+    if (peers.length === 0) return;
+
+    try {
+      // Egress (server → client = client download): root HTB with default class
+      await Util.exec('tc qdisc add dev wg0 root handle 1: htb default 999', { log: false });
+      await Util.exec('tc class add dev wg0 parent 1: classid 1:999 htb rate 10gbit ceil 10gbit', { log: false });
+      // Ingress (client → server = client upload) needs a separate ingress qdisc
+      await Util.exec('tc qdisc add dev wg0 handle ffff: ingress', { log: false });
+    } catch (err) {
+      debug(`tc setup failed: ${err && err.message}`);
+      return;
+    }
+
+    for (const client of peers) {
+      const lastOctet = parseInt(String(client.address).split('.').pop(), 10);
+      if (Number.isNaN(lastOctet) || lastOctet < 2 || lastOctet > 254) continue;
+      const classid = `1:${lastOctet}`;
+      const rate = `${client.bandwidthLimit}mbit`;
+      const burst = `${Math.max(15, client.bandwidthLimit * 4)}k`;
+      try {
+        await Util.exec(`tc class add dev wg0 parent 1: classid ${classid} htb rate ${rate} ceil ${rate}`, { log: false });
+        await Util.exec(`tc qdisc add dev wg0 parent ${classid} handle ${lastOctet}: sfq perturb 10`, { log: false });
+        await Util.exec(`tc filter add dev wg0 protocol ip parent 1: prio 1 u32 match ip dst ${client.address}/32 flowid ${classid}`, { log: false });
+        await Util.exec(`tc filter add dev wg0 parent ffff: protocol ip prio 1 u32 match ip src ${client.address}/32 police rate ${rate} burst ${burst} drop flowid :1`, { log: false });
+      } catch (err) {
+        debug(`tc apply failed for ${client.name}: ${err && err.message}`);
+      }
+    }
+    debug(`Traffic control applied to ${peers.length} peer(s).`);
+  }
+
+  async monitorDeviceConnections() {
+    const config = await this.getConfig();
+
+    let dump;
+    try {
+      dump = await Util.exec('wg show wg0 dump', { log: false });
+    } catch (err) {
+      debug(`Device monitor: failed to read wg dump: ${err && err.message}`);
+      return;
+    }
+
+    if (!this.__deviceTracking) this.__deviceTracking = {};
+    const now = Date.now();
+    let changed = false;
+
+    const clientByPublicKey = {};
+    for (const [clientId, client] of Object.entries(config.clients)) {
+      clientByPublicKey[client.publicKey] = { clientId, client };
+    }
+
+    const lines = String(dump).trim().split('\n').slice(1);
+    for (const line of lines) {
+      const cols = line.split('\t');
+      const publicKey = cols[0];
+      const endpoint = cols[2];
+      const latestHandshakeAt = cols[4];
+      if (!publicKey || !endpoint || endpoint === '(none)') continue;
+
+      const handshakeMs = parseInt(latestHandshakeAt, 10) * 1000;
+      if (!handshakeMs || (now - handshakeMs) > DEVICE_HANDSHAKE_FRESH_MS) continue;
+
+      const entry = clientByPublicKey[publicKey];
+      if (!entry) continue;
+      const { clientId, client } = entry;
+      if (!client.maxDevices || client.maxDevices <= 0) continue;
+
+      let tracking = this.__deviceTracking[clientId];
+      if (!tracking) {
+        tracking = { endpoints: {} };
+        this.__deviceTracking[clientId] = tracking;
+      }
+      tracking.endpoints[endpoint] = now;
+
+      for (const ep of Object.keys(tracking.endpoints)) {
+        if (now - tracking.endpoints[ep] > DEVICE_ENDPOINT_TTL_MS) {
+          delete tracking.endpoints[ep];
+        }
+      }
+
+      const count = Object.keys(tracking.endpoints).length;
+      if (count > client.maxDevices && client.enabled) {
+        debug(`Device limit exceeded for ${client.name} (${count} > ${client.maxDevices}). Disabling peer.`);
+        client.enabled = false;
+        client.updatedAt = new Date();
+        client.deviceLimitExceededAt = new Date();
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      await this.saveConfig();
+    }
   }
 
 };

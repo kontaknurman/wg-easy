@@ -12,6 +12,8 @@ import ClientCard from '@/components/ClientCard.vue';
 import CreateClientDialog from '@/components/CreateClientDialog.vue';
 import DeleteClientDialog from '@/components/DeleteClientDialog.vue';
 import ScheduleDialog from '@/components/ScheduleDialog.vue';
+import DeviceLimitDialog from '@/components/DeviceLimitDialog.vue';
+import BandwidthLimitDialog from '@/components/BandwidthLimitDialog.vue';
 import QrDialog from '@/components/QrDialog.vue';
 import { HugeiconsIcon } from '@hugeicons/vue';
 import { UserAdd01Icon, UserMultiple02Icon } from '@hugeicons/core-free-icons';
@@ -26,6 +28,8 @@ const transferState = reactive({});
 const createOpen = ref(false);
 const deleteClient = ref(null);
 const scheduleClient = ref(null);
+const deviceLimitClient = ref(null);
+const bandwidthLimitClient = ref(null);
 const qrClient = ref(null);
 
 let pollTimer = null;
@@ -79,6 +83,32 @@ async function saveSchedule(schedule) {
     await api.updateClientSchedule({ clientId: scheduleClient.value.id, schedule });
     toast({ title: 'Schedule saved' });
     scheduleClient.value = null;
+    await refresh();
+  } catch (err) { toastError(err); }
+}
+
+async function saveDeviceLimit(maxDevices) {
+  if (!deviceLimitClient.value) return;
+  try {
+    await api.updateClientMaxDevices({ clientId: deviceLimitClient.value.id, maxDevices });
+    toast({
+      title: maxDevices > 0 ? 'Device limit saved' : 'Device limit removed',
+      description: maxDevices > 0 ? `Max ${maxDevices} concurrent device${maxDevices === 1 ? '' : 's'}.` : undefined,
+    });
+    deviceLimitClient.value = null;
+    await refresh();
+  } catch (err) { toastError(err); }
+}
+
+async function saveBandwidthLimit(bandwidthLimit) {
+  if (!bandwidthLimitClient.value) return;
+  try {
+    await api.updateClientBandwidthLimit({ clientId: bandwidthLimitClient.value.id, bandwidthLimit });
+    toast({
+      title: bandwidthLimit > 0 ? 'Bandwidth limit saved' : 'Bandwidth limit removed',
+      description: bandwidthLimit > 0 ? `Capped at ${bandwidthLimit} Mbps.` : undefined,
+    });
+    bandwidthLimitClient.value = null;
     await refresh();
   } catch (err) { toastError(err); }
 }
@@ -137,6 +167,8 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer); });
           <ClientCard
             v-for="client in clients" :key="client.id" :client="client"
             @changed="refresh" @schedule="scheduleClient = $event"
+            @device-limit="deviceLimitClient = $event"
+            @bandwidth-limit="bandwidthLimitClient = $event"
             @delete="deleteClient = $event" @qr="qrClient = $event"
             @error="toastError" />
         </div>
@@ -150,6 +182,12 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer); });
     <ScheduleDialog
       :open="!!scheduleClient" :client="scheduleClient"
       @update:open="(v) => { if (!v) scheduleClient = null }" @save="saveSchedule" />
+    <DeviceLimitDialog
+      :open="!!deviceLimitClient" :client="deviceLimitClient"
+      @update:open="(v) => { if (!v) deviceLimitClient = null }" @save="saveDeviceLimit" />
+    <BandwidthLimitDialog
+      :open="!!bandwidthLimitClient" :client="bandwidthLimitClient"
+      @update:open="(v) => { if (!v) bandwidthLimitClient = null }" @save="saveBandwidthLimit" />
     <QrDialog
       :open="!!qrClient" :client="qrClient"
       @update:open="(v) => { if (!v) qrClient = null }" />
