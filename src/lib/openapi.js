@@ -72,6 +72,8 @@ const clientSchema = {
     bandwidthLimit: {
       type: 'integer', minimum: 0, maximum: 10000, description: 'Per-peer bandwidth cap in Mbps applied symmetrically (download via egress HTB on wg0, upload via ingress police). 0 disables the cap.',
     },
+    loggingEnabled: { type: 'boolean', description: 'When true, the server captures connection events (conntrack) and hostname events (DNS / TLS SNI / HTTP Host via tshark) for this peer and exposes them on the SSE stream.' },
+    logBufferSize: { type: 'integer', description: 'Number of recent log events held in the in-memory ring buffer (max ~500).' },
   },
   required: ['id', 'name', 'enabled', 'address', 'publicKey', 'createdAt', 'updatedAt'],
 };
@@ -452,6 +454,55 @@ function buildSpec(settings = {}) {
           },
         },
       },
+      '/api/wireguard/client/{clientId}/logging': {
+        parameters: [
+          {
+            name: 'clientId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' },
+          },
+        ],
+        put: {
+          tags: ['Logging'],
+          summary: 'Enable or disable per-peer connection logging',
+          description: 'Captures **connection metadata only** — destination IP, port, and (when available) hostname extracted from DNS queries, TLS SNI, and HTTP Host headers. Backed by `conntrack -E` (every new TCP/UDP connection) and `tshark` (hostname events) running globally; events are filtered to enabled peers and held in an in-memory ring buffer (~500 per peer). **No payload, no URLs paths, no HTTPS bodies are captured.** Reading other peoples traffic metadata is sensitive — use only on systems you own.',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: { loggingEnabled: { type: 'boolean' } },
+                  required: ['loggingEnabled'],
+                },
+              },
+            },
+          },
+          responses: {
+            204: { description: 'Setting saved.' },
+            401: { description: 'Not logged in.' },
+            404: { description: 'Client not found.' },
+          },
+        },
+      },
+      '/api/wireguard/client/{clientId}/log/stream': {
+        parameters: [
+          {
+            name: 'clientId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' },
+          },
+        ],
+        get: {
+          tags: ['Logging'],
+          summary: 'Server-Sent Events stream of connection log events',
+          description: 'Returns `text/event-stream`. The current ring buffer is replayed first, then new events are streamed as they happen. Each `data:` frame is a JSON object with `ts`, `type` (`connection` | `dns` | `tls` | `http`), `srcIp`, `dstIp`, `dstPort`, `protocol`, and an optional `hostname`. A keep-alive comment line is sent every 20s.',
+          responses: {
+            200: {
+              description: 'Event stream.',
+              content: { 'text/event-stream': { schema: { type: 'string' } } },
+            },
+            401: { description: 'Not logged in.' },
+            404: { description: 'Client not found.' },
+          },
+        },
+      },
       '/api/wireguard/client/{clientId}/qrcode.svg': {
         parameters: [
           {
@@ -498,6 +549,7 @@ function buildSpec(settings = {}) {
       { name: 'Client', description: 'WireGuard peer management.' },
       { name: 'Schedule', description: 'Per-day active hours per client.' },
       { name: 'Limits', description: 'Per-config limits such as max concurrent devices.' },
+      { name: 'Logging', description: 'Per-peer connection metadata logging (DNS / TLS SNI / HTTP Host).' },
       { name: 'Settings', description: 'Site branding and panel-wide settings.' },
     ],
   };

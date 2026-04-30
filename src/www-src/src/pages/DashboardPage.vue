@@ -14,6 +14,7 @@ import DeleteClientDialog from '@/components/DeleteClientDialog.vue';
 import ScheduleDialog from '@/components/ScheduleDialog.vue';
 import DeviceLimitDialog from '@/components/DeviceLimitDialog.vue';
 import BandwidthLimitDialog from '@/components/BandwidthLimitDialog.vue';
+import LogDialog from '@/components/LogDialog.vue';
 import QrDialog from '@/components/QrDialog.vue';
 import { HugeiconsIcon } from '@hugeicons/vue';
 import { UserAdd01Icon, UserMultiple02Icon } from '@hugeicons/core-free-icons';
@@ -31,6 +32,7 @@ const deleteClient = ref(null);
 const scheduleClient = ref(null);
 const deviceLimitClient = ref(null);
 const bandwidthLimitClient = ref(null);
+const logClient = ref(null);
 const qrClient = ref(null);
 
 let pollTimer = null;
@@ -170,6 +172,7 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer); });
             @changed="refresh" @schedule="scheduleClient = $event"
             @device-limit="deviceLimitClient = $event"
             @bandwidth-limit="bandwidthLimitClient = $event"
+            @log="logClient = $event"
             @delete="deleteClient = $event" @qr="qrClient = $event"
             @error="toastError" />
         </div>
@@ -193,6 +196,9 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer); });
     <BandwidthLimitDialog
       :open="!!bandwidthLimitClient" :client="bandwidthLimitClient"
       @update:open="(v) => { if (!v) bandwidthLimitClient = null }" @save="saveBandwidthLimit" />
+    <LogDialog
+      :open="!!logClient" :client="logClient"
+      @update:open="(v) => { if (!v) logClient = null }" @changed="refresh" />
     <QrDialog
       :open="!!qrClient" :client="qrClient"
       @update:open="(v) => { if (!v) qrClient = null }" />

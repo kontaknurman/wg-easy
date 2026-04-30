@@ -20,6 +20,7 @@ const sections = [
   { id: 'clients', label: 'Clients' },
   { id: 'schedule', label: 'Schedule' },
   { id: 'limits', label: 'Limits' },
+  { id: 'logging', label: 'Logging' },
   { id: 'schemas', label: 'Schemas' },
 ];
 
@@ -50,6 +51,10 @@ const endpoints = {
   limits: [
     { method: 'PUT', path: '/api/wireguard/client/:id/max-devices', desc: 'Set the maximum concurrent devices. 0 disables enforcement. When exceeded, the peer is auto-disabled and deviceLimitExceededAt is set.' },
     { method: 'PUT', path: '/api/wireguard/client/:id/bandwidth-limit', desc: 'Set per-peer bandwidth cap in Mbps (0 = unlimited). Applied with Linux Traffic Control (tc HTB egress + ingress police).' },
+  ],
+  logging: [
+    { method: 'PUT', path: '/api/wireguard/client/:id/logging', desc: 'Enable/disable per-peer connection metadata logging. Body: { loggingEnabled: bool }.' },
+    { method: 'GET', path: '/api/wireguard/client/:id/log/stream', desc: 'Server-Sent Events stream of log events (replay buffer + live).' },
   ],
 };
 
@@ -148,6 +153,35 @@ curl -b cookies.txt http://localhost:51821/api/wireguard/client</pre>
                   <p class="mt-1 text-xs text-muted-foreground">{{ ep.desc }}</p>
                 </div>
               </div>
+            </CardContent>
+          </Card>
+
+          <Card id="logging-detail">
+            <CardHeader>
+              <CardTitle>Connection logging</CardTitle>
+              <CardDescription>Per-peer real-time log of destination IPs, ports, and hostnames.</CardDescription>
+            </CardHeader>
+            <CardContent class="space-y-3 text-sm text-muted-foreground">
+              <p class="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-300">
+                <strong>Privacy notice:</strong> when enabled per peer, the server captures connection metadata —
+                destination IP/port plus hostname extracted from DNS queries, TLS SNI, and HTTP Host headers.
+                <strong>No URL paths, no payloads, no HTTPS bodies are captured.</strong> Use only on systems you own
+                and inform users.
+              </p>
+              <p>Two backends run when at least one peer has <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">loggingEnabled = true</code>:</p>
+              <ul class="list-disc pl-5 space-y-1.5">
+                <li><code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">conntrack -E -e NEW</code> — emits a <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">connection</code> event for each new TCP/UDP flow with src/dst IP and ports.</li>
+                <li><code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">tshark</code> on <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">wg0</code> — emits <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">dns</code>, <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">tls</code>, or <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">http</code> events with extracted hostnames.</li>
+              </ul>
+              <p>Events are matched to a peer by source IP, deduped within a 30s window per (peer, host), and held in an in-memory ring buffer (~500 per peer). The SSE endpoint replays the buffer on connect, then streams new events live with a 20s keep-alive ping.</p>
+              <pre class="rounded-lg bg-zinc-900 p-4 text-xs leading-relaxed text-zinc-100 overflow-x-auto"># Enable logging
+curl -b cookies.txt -X PUT http://localhost:51821/api/wireguard/client/CLIENT_ID/logging \
+  -H "Content-Type: application/json" \
+  -d '{"loggingEnabled": true}'
+
+# Stream events
+curl -N -b cookies.txt http://localhost:51821/api/wireguard/client/CLIENT_ID/log/stream</pre>
+              <p class="text-xs">Requires <code class="rounded bg-muted px-1 py-0.5 text-[11px] text-foreground">conntrack-tools</code> and <code class="rounded bg-muted px-1 py-0.5 text-[11px] text-foreground">tshark</code> on the host (both are in the bundled Dockerfile).</p>
             </CardContent>
           </Card>
 
@@ -255,6 +289,7 @@ curl -b cookies.txt http://localhost:51821/api/wireguard/client</pre>
                       <tr><td class="px-3 py-2 font-mono text-xs">activeDeviceCount</td><td class="px-3 py-2 text-muted-foreground">int</td><td class="px-3 py-2 text-muted-foreground">Distinct endpoints currently tracked.</td></tr>
                       <tr><td class="px-3 py-2 font-mono text-xs">deviceLimitExceededAt</td><td class="px-3 py-2 text-muted-foreground">datetime|null</td><td class="px-3 py-2 text-muted-foreground">When the peer was last auto-disabled by the limit.</td></tr>
                       <tr><td class="px-3 py-2 font-mono text-xs">bandwidthLimit</td><td class="px-3 py-2 text-muted-foreground">int (0–10000)</td><td class="px-3 py-2 text-muted-foreground">Per-peer bandwidth cap in Mbps; 0 = unlimited.</td></tr>
+                      <tr><td class="px-3 py-2 font-mono text-xs">loggingEnabled</td><td class="px-3 py-2 text-muted-foreground">boolean</td><td class="px-3 py-2 text-muted-foreground">When true, log connection metadata for this peer.</td></tr>
                       <tr><td class="px-3 py-2 font-mono text-xs">latestHandshakeAt</td><td class="px-3 py-2 text-muted-foreground">datetime|null</td><td class="px-3 py-2 text-muted-foreground">Last handshake timestamp.</td></tr>
                       <tr><td class="px-3 py-2 font-mono text-xs">transferRx, transferTx</td><td class="px-3 py-2 text-muted-foreground">int|null</td><td class="px-3 py-2 text-muted-foreground">Cumulative bytes.</td></tr>
                     </tbody>

@@ -21,9 +21,13 @@ RUN mv /app/node_modules /node_modules
 
 # Install Linux packages
 # - iproute2-tc: Linux Traffic Control (`tc`) for per-peer bandwidth limits
+# - conntrack-tools: per-peer connection logging (live `conntrack -E` events)
+# - tshark: per-peer hostname extraction (DNS, TLS SNI, HTTP Host)
 RUN apk add -U --no-cache \
   iptables \
   iproute2-tc \
+  conntrack-tools \
+  tshark \
   wireguard-tools \
   dumb-init
 

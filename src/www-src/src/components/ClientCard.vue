@@ -4,6 +4,7 @@ import { HugeiconsIcon } from '@hugeicons/vue';
 import {
   UserCircleIcon, Edit02Icon, Clock01Icon, QrCode01Icon, Download04Icon,
   Delete02Icon, ArrowDown01Icon, ArrowUp01Icon, Shield01Icon, FlashIcon,
+  EyeIcon,
 } from '@hugeicons/core-free-icons';
 import Switch from '@/components/ui/Switch.vue';
 import Button from '@/components/ui/Button.vue';
@@ -15,7 +16,7 @@ import { formatBytes, formatDateTime, formatRelative } from '@/lib/utils';
 const props = defineProps({
   client: { type: Object, required: true },
 });
-const emit = defineEmits(['changed', 'schedule', 'qr', 'delete', 'device-limit', 'bandwidth-limit', 'error']);
+const emit = defineEmits(['changed', 'schedule', 'qr', 'delete', 'device-limit', 'bandwidth-limit', 'log', 'error']);
 
 const editingName = ref(false);
 const editingAddress = ref(false);
@@ -34,6 +35,7 @@ const scheduleActive = computed(() => props.client.scheduleActive !== false);
 const deviceLimitOn = computed(() => (props.client.maxDevices || 0) > 0);
 const deviceLimitTripped = computed(() => !!props.client.deviceLimitExceededAt && !props.client.enabled);
 const bandwidthLimitOn = computed(() => (props.client.bandwidthLimit || 0) > 0);
+const loggingOn = computed(() => !!props.client.loggingEnabled);
 
 async function startEditName() {
   nameDraft.value = props.client.name;
@@ -164,6 +166,13 @@ async function toggleEnabled(value) {
         class="relative h-8 w-8" @click="$emit('bandwidth-limit', client)">
         <HugeiconsIcon :icon="FlashIcon" :size="16" :stroke-width="2" />
         <span v-if="bandwidthLimitOn" class="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
+      </Button>
+
+      <Button variant="ghost" size="icon"
+        :title="loggingOn ? 'Connection log (active)' : 'Connection log'"
+        class="relative h-8 w-8" @click="$emit('log', client)">
+        <HugeiconsIcon :icon="EyeIcon" :size="16" :stroke-width="2" />
+        <span v-if="loggingOn" class="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
       </Button>
 
       <Button variant="ghost" size="icon" class="h-8 w-8" title="QR code" @click="$emit('qr', client)">

@@ -157,6 +157,51 @@ module.exports = class Server {
         const { bandwidthLimit } = req.body;
         return WireGuard.updateClientBandwidthLimit({ clientId, bandwidthLimit });
       }))
+      .put('/api/wireguard/client/:clientId/logging', Util.promisify(async req => {
+        const { clientId } = req.params;
+        const { loggingEnabled } = req.body;
+        return WireGuard.updateClientLogging({ clientId, loggingEnabled });
+      }))
+      .get('/api/wireguard/client/:clientId/log/stream', (req, res) => {
+        const { clientId } = req.params;
+        Promise.resolve(WireGuard.getClient({ clientId })).then(() => {
+          res.set({
+            'Content-Type': 'text/event-stream; charset=utf-8',
+            'Cache-Control': 'no-cache, no-transform',
+            Connection: 'keep-alive',
+            'X-Accel-Buffering': 'no',
+          });
+          res.flushHeaders();
+
+          const buffered = WireGuard.getClientLogBuffer(clientId);
+          for (const event of buffered) {
+            res.write(`data: ${JSON.stringify(event)}\n\n`);
+          }
+
+          const unsubscribe = WireGuard.subscribeClientLog(clientId, event => {
+            try {
+              res.write(`data: ${JSON.stringify(event)}\n\n`);
+            } catch { /* ignore */ }
+          });
+
+          const keepalive = setInterval(() => {
+            try {
+              res.write(': ping\n\n');
+            } catch { /* ignore */ }
+          }, 20000);
+
+          const cleanup = () => {
+            clearInterval(keepalive);
+            unsubscribe();
+          };
+          req.on('close', cleanup);
+          req.on('error', cleanup);
+        }).catch(err => {
+          res.status(err && err.statusCode === 404 ? 404 : 500).json({
+            error: err && err.message ? err.message : 'Stream failed',
+          });
+        });
+      })
       .put('/api/settings', Util.promisify(async req => {
         return WireGuard.updateSettings(req.body || {});
       }))
