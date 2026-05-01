@@ -242,14 +242,32 @@ function buildSpec(settings = {}) {
         post: {
           tags: ['Client'],
           summary: 'Create a new client',
-          description: 'Generates a new WireGuard keypair and PSK, allocates the next free IPv4 in the tunnel subnet, defaults `enabled=true`, and creates an empty disabled schedule.',
+          description: 'Generates a new WireGuard keypair and PSK and allocates the next free IPv4 in the tunnel subnet (or accepts a specific `address` when supplied). All per-config settings (enable flag, schedule, max-devices, bandwidth limit, logging, allowed source IPs) can be set at creation time — anything you omit gets the default. The full server record including `privateKey` and `preSharedKey` is returned.',
           requestBody: {
             required: true,
             content: {
               'application/json': {
                 schema: {
                   type: 'object',
-                  properties: { name: { type: 'string' } },
+                  properties: {
+                    name: { type: 'string' },
+                    enabled: { type: 'boolean', default: true, description: 'Manual master enable flag.' },
+                    address: { type: 'string', example: '10.8.0.42', description: 'Optional tunnel IPv4. Must be in the configured subnet (octet 2–254). Auto-allocated if omitted.' },
+                    schedule: { $ref: '#/components/schemas/Schedule' },
+                    maxDevices: {
+                      type: 'integer', minimum: 0, maximum: 99, default: 0,
+                    },
+                    bandwidthLimit: {
+                      type: 'integer', minimum: 0, maximum: 10000, default: 0, description: 'Mbps; 0 disables.',
+                    },
+                    loggingEnabled: { type: 'boolean', default: false },
+                    allowedSourceIps: {
+                      type: 'array',
+                      items: { type: 'string', example: '203.0.113.5/32' },
+                      maxItems: 50,
+                      description: 'IPv4 / CIDR allow-list. Empty array disables the check.',
+                    },
+                  },
                   required: ['name'],
                 },
               },

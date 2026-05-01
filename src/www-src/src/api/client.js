@@ -41,7 +41,7 @@ export const api = {
       latestHandshakeAt: c.latestHandshakeAt ? new Date(c.latestHandshakeAt) : null,
     }));
   },
-  createClient: ({ name }) => call({ method: 'POST', path: '/wireguard/client', body: { name } }),
+  createClient: (payload) => call({ method: 'POST', path: '/wireguard/client', body: payload || {} }),
   deleteClient: ({ clientId }) => call({ method: 'DELETE', path: `/wireguard/client/${clientId}` }),
   enableClient: ({ clientId }) => call({ method: 'POST', path: `/wireguard/client/${clientId}/enable` }),
   disableClient: ({ clientId }) => call({ method: 'POST', path: `/wireguard/client/${clientId}/disable` }),

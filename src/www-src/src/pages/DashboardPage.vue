@@ -63,11 +63,11 @@ async function refresh() {
   }
 }
 
-async function createClient(name) {
+async function createClient(payload) {
   try {
-    await api.createClient({ name });
+    await api.createClient(payload);
     createOpen.value = false;
-    toast({ title: 'Client created', description: `"${name}" is ready to connect.` });
+    toast({ title: 'Client created', description: `"${payload.name}" is ready to connect.` });
     await refresh();
   } catch (err) { toastError(err); }
 }
