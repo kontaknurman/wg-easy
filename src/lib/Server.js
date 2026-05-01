@@ -10,6 +10,32 @@ const Util = require('./Util');
 const ServerError = require('./ServerError');
 const WireGuard = require('../services/WireGuard');
 const buildOpenApi = require('./openapi');
+const { ipMatchesCidrList } = require('./cidr');
+const CLOUDFLARE_RANGES = require('./cloudflareIps');
+
+function stripIpv4Prefix(ip) {
+  if (typeof ip !== 'string') return '';
+  return ip.replace(/^::ffff:/, '');
+}
+
+function extractClientIp(req, mode) {
+  const direct = stripIpv4Prefix((req.socket && req.socket.remoteAddress) || '');
+  const cfHeader = req.headers && req.headers['cf-connecting-ip'];
+  const xff = req.headers && req.headers['x-forwarded-for'];
+
+  if (mode === 'cf-connecting-ip' && cfHeader) {
+    return stripIpv4Prefix(String(cfHeader).trim());
+  }
+  if (mode === 'x-forwarded-for' && xff) {
+    return stripIpv4Prefix(String(xff).split(',')[0].trim());
+  }
+  if (mode === 'auto') {
+    if (cfHeader && ipMatchesCidrList(direct, CLOUDFLARE_RANGES)) {
+      return stripIpv4Prefix(String(cfHeader).trim());
+    }
+  }
+  return direct;
+}
 
 const {
   PORT,
@@ -23,6 +49,30 @@ module.exports = class Server {
     // Express
     this.app = express()
       .disable('etag')
+
+      // API allow-list gate — runs before everything else so even static
+      // assets and the login page are blocked from disallowed IPs.
+      .use(async (req, res, next) => {
+        let settings;
+        try {
+          settings = await WireGuard.getSettings();
+        } catch {
+          return next();
+        }
+        if (!settings.apiAllowedIpsEnabled || !settings.apiAllowedIps || settings.apiAllowedIps.length === 0) {
+          return next();
+        }
+        const ip = extractClientIp(req, settings.trustProxyHeader || 'auto');
+        if (!ipMatchesCidrList(ip, settings.apiAllowedIps)) {
+          debug(`Blocked request from ${ip || 'unknown'} (not in apiAllowedIps).`);
+          if (req.path && req.path.startsWith('/api/')) {
+            return res.status(403).json({ error: `Forbidden (source IP ${ip || 'unknown'} not allowed).` });
+          }
+          return res.status(403).type('text/plain').send(`Forbidden (source IP ${ip || 'unknown'} not allowed).\n`);
+        }
+        return next();
+      })
+
       .use('/', express.static(path.join(__dirname, '..', 'www')))
       .use(express.json())
       .use(expressSession({
@@ -40,6 +90,19 @@ module.exports = class Server {
       }))
       .get('/api/settings', Util.promisify(async () => {
         return WireGuard.getSettings();
+      }))
+      .get('/api/me/ip', Util.promisify(async req => {
+        const settings = await WireGuard.getSettings();
+        const ip = extractClientIp(req, settings.trustProxyHeader || 'auto');
+        const direct = stripIpv4Prefix((req.socket && req.socket.remoteAddress) || '');
+        return {
+          ip,
+          direct,
+          trustProxyHeader: settings.trustProxyHeader || 'auto',
+          fromCloudflare: ipMatchesCidrList(direct, CLOUDFLARE_RANGES),
+          cfConnectingIp: req.headers['cf-connecting-ip'] || null,
+          xForwardedFor: req.headers['x-forwarded-for'] || null,
+        };
       }))
 
       // Authentication

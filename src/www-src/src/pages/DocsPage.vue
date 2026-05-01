@@ -28,6 +28,7 @@ const endpoints = {
   meta: [
     { method: 'GET', path: '/api/release', desc: 'Numeric release identifier (matches package.json).' },
     { method: 'GET', path: '/api/openapi.json', desc: 'Full OpenAPI 3.0 specification for this API.' },
+    { method: 'GET', path: '/api/me/ip', desc: 'Returns the resolved client IP, direct socket address, Cloudflare detection result, and raw forwarding headers.' },
   ],
   session: [
     { method: 'GET', path: '/api/session', desc: 'Current session state ({ requiresPassword, authenticated }).' },
@@ -154,6 +155,45 @@ curl -b cookies.txt http://localhost:51821/api/wireguard/client</pre>
                   <p class="mt-1 text-xs text-muted-foreground">{{ ep.desc }}</p>
                 </div>
               </div>
+            </CardContent>
+          </Card>
+
+          <Card id="api-access-detail">
+            <CardHeader>
+              <CardTitle>API access control</CardTitle>
+              <CardDescription>Panel-wide IPv4 allow-list with Cloudflare-aware origin detection.</CardDescription>
+            </CardHeader>
+            <CardContent class="space-y-3 text-sm text-muted-foreground">
+              <p>
+                When <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">apiAllowedIpsEnabled</code> is true and
+                <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">apiAllowedIps</code> is non-empty, an
+                early Express middleware checks every inbound request before the static handler and any API route. Requests
+                from IPs outside the list get a 403 (JSON for API paths, plain text for static paths). The login page itself
+                is gated, so disallowed IPs cannot even reach the password prompt.
+              </p>
+              <p>
+                Origin IP resolution is controlled by <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">trustProxyHeader</code>:
+              </p>
+              <ul class="list-disc pl-5 space-y-1.5">
+                <li><strong>auto</strong> (default): if the TCP source falls inside Cloudflare's published IPv4 ranges
+                  (<a class="underline" target="_blank" rel="noopener" href="https://www.cloudflare.com/ips-v4/">cloudflare.com/ips-v4</a>),
+                  use <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">CF-Connecting-IP</code>; otherwise use the direct socket address. Safe behind Cloudflare and works with bare connections.</li>
+                <li><strong>cf-connecting-ip</strong>: always trust the header. Use only if your network blocks non-Cloudflare reachability — otherwise headers can be spoofed.</li>
+                <li><strong>x-forwarded-for</strong>: trust the first hop in <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">X-Forwarded-For</code>. For generic reverse proxies.</li>
+                <li><strong>none</strong>: always use the direct TCP source. Ignores all forwarding headers.</li>
+              </ul>
+              <p class="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-300">
+                <strong>Lock-out recovery:</strong> if you accidentally exclude your own IP, edit
+                <code class="rounded bg-background/40 px-1 py-0.5 text-[11px]">wg0.json</code> on the host
+                (set <code class="rounded bg-background/40 px-1 py-0.5 text-[11px]">settings.apiAllowedIpsEnabled</code> to false) and restart the panel.
+              </p>
+              <p>The <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">GET /api/me/ip</code> endpoint reports
+                how the panel sees the caller (direct address, resolved IP, whether the request arrives from Cloudflare,
+                and the raw forwarding headers) — useful for verifying setup before enabling the gate.</p>
+              <pre class="rounded-lg bg-zinc-900 p-4 text-xs leading-relaxed text-zinc-100 overflow-x-auto">curl -b cookies.txt -X PUT http://localhost:51821/api/settings \
+  -H "Content-Type: application/json" \
+  -d '{"apiAllowedIpsEnabled": true, "trustProxyHeader": "auto",
+       "apiAllowedIps": ["203.0.113.5/32", "192.168.1.0/24"]}'</pre>
             </CardContent>
           </Card>
 

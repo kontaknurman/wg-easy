@@ -121,7 +121,7 @@ function buildSpec(settings = {}) {
         },
         Settings: {
           type: 'object',
-          description: 'Public site branding shown in the panel UI.',
+          description: 'Public site branding and panel-wide options.',
           properties: {
             siteName: { type: 'string', maxLength: 60, description: 'Brand name shown in the header, login page, browser tab title, and docs.' },
             tagline: { type: 'string', maxLength: 200, description: 'Short tagline shown under the dashboard heading.' },
@@ -129,6 +129,18 @@ function buildSpec(settings = {}) {
             loginSubtitle: { type: 'string', maxLength: 200, description: 'Subtitle shown under the login title.' },
             showApiDocs: { type: 'boolean', description: 'When false, hides the API docs link from the header (the page itself remains reachable).' },
             footerText: { type: 'string', maxLength: 500, description: 'Optional footer text shown below the dashboard.' },
+            apiAllowedIpsEnabled: { type: 'boolean', description: 'When true, only requests from `apiAllowedIps` are allowed to reach the API or the static dashboard. Returns 403 to all other IPs.' },
+            apiAllowedIps: {
+              type: 'array',
+              items: { type: 'string', example: '203.0.113.5/32' },
+              maxItems: 50,
+              description: 'IPv4 / CIDR allow-list applied to inbound requests. Empty list disables the gate even if `apiAllowedIpsEnabled` is true.',
+            },
+            trustProxyHeader: {
+              type: 'string',
+              enum: ['auto', 'cf-connecting-ip', 'x-forwarded-for', 'none'],
+              description: '`auto` (default) trusts `CF-Connecting-IP` only when the TCP source is in a Cloudflare range; `cf-connecting-ip` always trusts that header (use behind a reverse proxy that strips spoofs); `x-forwarded-for` trusts the first hop in `X-Forwarded-For`; `none` always uses the direct socket address.',
+            },
           },
         },
       },
@@ -153,6 +165,20 @@ function buildSpec(settings = {}) {
           responses: {
             200: {
               description: 'OpenAPI document.',
+              content: { 'application/json': { schema: { type: 'object' } } },
+            },
+          },
+        },
+      },
+      '/api/me/ip': {
+        get: {
+          tags: ['Meta'],
+          summary: 'Resolve the caller IP as the panel sees it',
+          description: 'Useful for setting up the API allow-list without locking yourself out. Reports the direct TCP source, the resolved IP after applying `trustProxyHeader`, whether the connection arrives from Cloudflare, and the raw `CF-Connecting-IP` / `X-Forwarded-For` headers.',
+          security: [],
+          responses: {
+            200: {
+              description: 'Client IP resolution.',
               content: { 'application/json': { schema: { type: 'object' } } },
             },
           },

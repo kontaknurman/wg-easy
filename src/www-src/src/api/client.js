@@ -56,6 +56,7 @@ export const api = {
 
   getSettings: () => call({ method: 'GET', path: '/settings' }),
   updateSettings: (patch) => call({ method: 'PUT', path: '/settings', body: patch }),
+  getMyIp: () => call({ method: 'GET', path: '/me/ip' }),
   qrCodeUrl: ({ clientId }) => `/api/wireguard/client/${clientId}/qrcode.svg`,
   configurationUrl: ({ clientId }) => `/api/wireguard/client/${clientId}/configuration`,
 };
