@@ -162,6 +162,11 @@ module.exports = class Server {
         const { loggingEnabled } = req.body;
         return WireGuard.updateClientLogging({ clientId, loggingEnabled });
       }))
+      .put('/api/wireguard/client/:clientId/allowed-source-ips', Util.promisify(async req => {
+        const { clientId } = req.params;
+        const { allowedSourceIps } = req.body;
+        return WireGuard.updateClientAllowedSourceIps({ clientId, allowedSourceIps });
+      }))
       .get('/api/wireguard/client/:clientId/log/stream', (req, res) => {
         const { clientId } = req.params;
         Promise.resolve(WireGuard.getClient({ clientId })).then(() => {

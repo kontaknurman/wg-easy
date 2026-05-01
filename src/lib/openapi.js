@@ -74,6 +74,13 @@ const clientSchema = {
     },
     loggingEnabled: { type: 'boolean', description: 'When true, the server captures connection events (conntrack) and hostname events (DNS / TLS SNI / HTTP Host via tshark) for this peer and exposes them on the SSE stream.' },
     logBufferSize: { type: 'integer', description: 'Number of recent log events held in the in-memory ring buffer (max ~500).' },
+    allowedSourceIps: {
+      type: 'array',
+      items: { type: 'string', example: '203.0.113.5/32' },
+      maxItems: 50,
+      description: 'IPv4 CIDR allow-list of public source addresses. Empty array (default) means no restriction. When non-empty, the monitor disables the peer if its current `endpoint` IP from `wg show wg0 dump` does not match any CIDR.',
+    },
+    sourceIpDeniedAt: { type: ['string', 'null'], format: 'date-time', description: 'Set when the peer was auto-disabled because its endpoint did not match `allowedSourceIps`. Cleared on manual re-enable or allow-list update.' },
   },
   required: ['id', 'name', 'enabled', 'address', 'publicKey', 'createdAt', 'updatedAt'],
 };
@@ -449,6 +456,41 @@ function buildSpec(settings = {}) {
           },
           responses: {
             204: { description: 'Bandwidth limit saved.' },
+            401: { description: 'Not logged in.' },
+            404: { description: 'Client not found.' },
+          },
+        },
+      },
+      '/api/wireguard/client/{clientId}/allowed-source-ips': {
+        parameters: [
+          {
+            name: 'clientId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' },
+          },
+        ],
+        put: {
+          tags: ['Limits'],
+          summary: 'Set the public source-IP allow-list (CIDR) for this peer',
+          description: 'WireGuard authenticates by key, not by source IP — there is no protocol-level "reject by IP". This list is enforced post-handshake: the device monitor polls `wg show wg0 dump`, reads each peer current `endpoint`, and if the IP does not match any CIDR in the list, the peer is auto-disabled and `sourceIpDeniedAt` is timestamped. Empty array disables the check. Detection lag is 10–60s. Mobile clients roaming Wi-Fi/4G will frequently trip the check unless their carriers ranges are added.',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    allowedSourceIps: {
+                      type: 'array',
+                      items: { type: 'string', example: '203.0.113.5/32' },
+                      maxItems: 50,
+                    },
+                  },
+                  required: ['allowedSourceIps'],
+                },
+              },
+            },
+          },
+          responses: {
+            204: { description: 'Allow-list saved.' },
             401: { description: 'Not logged in.' },
             404: { description: 'Client not found.' },
           },

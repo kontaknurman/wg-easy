@@ -51,6 +51,7 @@ const endpoints = {
   limits: [
     { method: 'PUT', path: '/api/wireguard/client/:id/max-devices', desc: 'Set the maximum concurrent devices. 0 disables enforcement. When exceeded, the peer is auto-disabled and deviceLimitExceededAt is set.' },
     { method: 'PUT', path: '/api/wireguard/client/:id/bandwidth-limit', desc: 'Set per-peer bandwidth cap in Mbps (0 = unlimited). Applied with Linux Traffic Control (tc HTB egress + ingress police).' },
+    { method: 'PUT', path: '/api/wireguard/client/:id/allowed-source-ips', desc: 'Set per-peer public-IP allow-list (CIDR). Empty = no restriction. Endpoint outside the list auto-disables the peer.' },
   ],
   logging: [
     { method: 'PUT', path: '/api/wireguard/client/:id/logging', desc: 'Enable/disable per-peer connection metadata logging. Body: { loggingEnabled: bool }.' },
@@ -210,6 +211,31 @@ curl -N -b cookies.txt http://localhost:51821/api/wireguard/client/CLIENT_ID/log
             </CardContent>
           </Card>
 
+          <Card id="source-ip-detail">
+            <CardHeader>
+              <CardTitle>Source IP allow-list</CardTitle>
+              <CardDescription>Restrict which public IPs may use a config.</CardDescription>
+            </CardHeader>
+            <CardContent class="space-y-3 text-sm text-muted-foreground">
+              <p>
+                WireGuard does not have a native "reject by source IP" hook — the protocol authenticates by key only. The
+                panel approximates this restriction by polling <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">wg show wg0 dump</code>
+                every 10 seconds, reading each peer's current <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">endpoint</code>,
+                and matching the IP against the per-peer <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">allowedSourceIps</code> CIDR list.
+              </p>
+              <ul class="list-disc pl-5 space-y-1.5">
+                <li>Empty list = no restriction (default).</li>
+                <li>Endpoint outside any listed CIDR auto-disables the peer and timestamps <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">sourceIpDeniedAt</code>.</li>
+                <li>Detection lag 10–60 s; not a real-time block. Connection completes once before the panel kicks the peer.</li>
+                <li>Mobile peers roaming Wi-Fi/4G will trip this — list both networks if needed, or leave restriction off.</li>
+                <li>IPv6 endpoints fail open (allowed) since the matcher is IPv4-only.</li>
+              </ul>
+              <pre class="rounded-lg bg-zinc-900 p-4 text-xs leading-relaxed text-zinc-100 overflow-x-auto">curl -b cookies.txt -X PUT http://localhost:51821/api/wireguard/client/CLIENT_ID/allowed-source-ips \
+  -H "Content-Type: application/json" \
+  -d '{"allowedSourceIps": ["203.0.113.5/32", "192.168.1.0/24"]}'</pre>
+            </CardContent>
+          </Card>
+
           <Card id="device-limit-detail">
             <CardHeader>
               <CardTitle>Device limit (concurrent peers)</CardTitle>
@@ -290,6 +316,8 @@ curl -N -b cookies.txt http://localhost:51821/api/wireguard/client/CLIENT_ID/log
                       <tr><td class="px-3 py-2 font-mono text-xs">deviceLimitExceededAt</td><td class="px-3 py-2 text-muted-foreground">datetime|null</td><td class="px-3 py-2 text-muted-foreground">When the peer was last auto-disabled by the limit.</td></tr>
                       <tr><td class="px-3 py-2 font-mono text-xs">bandwidthLimit</td><td class="px-3 py-2 text-muted-foreground">int (0–10000)</td><td class="px-3 py-2 text-muted-foreground">Per-peer bandwidth cap in Mbps; 0 = unlimited.</td></tr>
                       <tr><td class="px-3 py-2 font-mono text-xs">loggingEnabled</td><td class="px-3 py-2 text-muted-foreground">boolean</td><td class="px-3 py-2 text-muted-foreground">When true, log connection metadata for this peer.</td></tr>
+                      <tr><td class="px-3 py-2 font-mono text-xs">allowedSourceIps</td><td class="px-3 py-2 text-muted-foreground">string[]</td><td class="px-3 py-2 text-muted-foreground">IPv4 / CIDR allow-list. Empty = no restriction.</td></tr>
+                      <tr><td class="px-3 py-2 font-mono text-xs">sourceIpDeniedAt</td><td class="px-3 py-2 text-muted-foreground">datetime|null</td><td class="px-3 py-2 text-muted-foreground">Last time the peer was auto-disabled by the IP allow-list.</td></tr>
                       <tr><td class="px-3 py-2 font-mono text-xs">latestHandshakeAt</td><td class="px-3 py-2 text-muted-foreground">datetime|null</td><td class="px-3 py-2 text-muted-foreground">Last handshake timestamp.</td></tr>
                       <tr><td class="px-3 py-2 font-mono text-xs">transferRx, transferTx</td><td class="px-3 py-2 text-muted-foreground">int|null</td><td class="px-3 py-2 text-muted-foreground">Cumulative bytes.</td></tr>
                     </tbody>
