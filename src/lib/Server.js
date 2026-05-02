@@ -183,6 +183,7 @@ module.exports = class Server {
         const {
           name, enabled, address, schedule,
           maxDevices, bandwidthLimit, loggingEnabled, allowedSourceIps,
+          blockedDomains,
         } = req.body || {};
         return WireGuard.createClient({
           name,
@@ -193,6 +194,7 @@ module.exports = class Server {
           bandwidthLimit,
           loggingEnabled,
           allowedSourceIps,
+          blockedDomains,
         });
       }))
       .delete('/api/wireguard/client/:clientId', Util.promisify(async req => {
@@ -241,6 +243,11 @@ module.exports = class Server {
         const { clientId } = req.params;
         const { allowedSourceIps } = req.body;
         return WireGuard.updateClientAllowedSourceIps({ clientId, allowedSourceIps });
+      }))
+      .put('/api/wireguard/client/:clientId/blocked-domains', Util.promisify(async req => {
+        const { clientId } = req.params;
+        const { blockedDomains } = req.body;
+        return WireGuard.updateClientBlockedDomains({ clientId, blockedDomains });
       }))
       .get('/api/wireguard/client/:clientId/connections', Util.promisify(async req => {
         const { clientId } = req.params;

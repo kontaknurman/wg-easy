@@ -23,6 +23,7 @@ import ScheduleDialog from '@/components/ScheduleDialog.vue';
 import DeviceLimitDialog from '@/components/DeviceLimitDialog.vue';
 import BandwidthLimitDialog from '@/components/BandwidthLimitDialog.vue';
 import SourceIpDialog from '@/components/SourceIpDialog.vue';
+import BlockedDomainsDialog from '@/components/BlockedDomainsDialog.vue';
 import LogDialog from '@/components/LogDialog.vue';
 import QrDialog from '@/components/QrDialog.vue';
 import DeleteClientDialog from '@/components/DeleteClientDialog.vue';
@@ -32,7 +33,7 @@ import {
   Shield01Icon, FlashIcon, EyeIcon, InternetIcon, QrCode01Icon,
   Download04Icon, Delete02Icon, ArrowDown01Icon, ArrowUp01Icon,
   Wifi01Icon, WifiDisconnected01Icon, RefreshIcon, AlertCircleIcon,
-  GlobeIcon,
+  GlobeIcon, BlockedIcon,
 } from '@hugeicons/core-free-icons';
 
 const route = useRoute();
@@ -49,6 +50,7 @@ const scheduleOpen = ref(false);
 const deviceLimitOpen = ref(false);
 const bandwidthOpen = ref(false);
 const sourceIpOpen = ref(false);
+const blockedDomainsOpen = ref(false);
 const logOpen = ref(false);
 const qrOpen = ref(false);
 const deleteOpen = ref(false);
@@ -116,6 +118,7 @@ const deviceLimitTripped = computed(() => !!client.value?.deviceLimitExceededAt)
 const bandwidthOn = computed(() => (client.value?.bandwidthLimit || 0) > 0);
 const sourceIpOn = computed(() => Array.isArray(client.value?.allowedSourceIps) && client.value.allowedSourceIps.length > 0);
 const sourceIpDenied = computed(() => !!client.value?.sourceIpDeniedAt && !client.value?.enabled);
+const blockedDomainsOn = computed(() => Array.isArray(client.value?.blockedDomains) && client.value.blockedDomains.length > 0);
 const loggingOn = computed(() => !!client.value?.loggingEnabled);
 
 function startEditName() {
@@ -171,6 +174,14 @@ async function saveSourceIp(allowedSourceIps) {
     await api.updateClientAllowedSourceIps({ clientId: client.value.id, allowedSourceIps });
     toast({ title: 'Source IP allow-list saved' });
     sourceIpOpen.value = false;
+    await refresh();
+  } catch (err) { toastError(err); }
+}
+async function saveBlockedDomains(blockedDomains) {
+  try {
+    await api.updateClientBlockedDomains({ clientId: client.value.id, blockedDomains });
+    toast({ title: blockedDomains.length > 0 ? 'Blocked websites saved' : 'Block-list cleared' });
+    blockedDomainsOpen.value = false;
     await refresh();
   } catch (err) { toastError(err); }
 }
@@ -457,6 +468,27 @@ function eventTypeVariant(type) {
             </CardContent>
           </Card>
 
+          <!-- Blocked websites -->
+          <Card>
+            <CardHeader class="flex-row items-center justify-between space-y-0 pb-3">
+              <div class="flex items-center gap-2">
+                <HugeiconsIcon :icon="BlockedIcon" :size="18" :stroke-width="2" class="text-muted-foreground" />
+                <CardTitle class="text-base">Blocked websites</CardTitle>
+                <Badge v-if="blockedDomainsOn" variant="success">on</Badge>
+              </div>
+              <Button variant="outline" size="sm" @click="blockedDomainsOpen = true">Edit</Button>
+            </CardHeader>
+            <CardContent class="text-sm text-muted-foreground">
+              <div v-if="!blockedDomainsOn">No domains blocked</div>
+              <div v-else>
+                <span class="font-medium text-foreground">{{ client.blockedDomains.length }}</span> pattern(s) active
+                <ul v-if="client.blockedDomains.length <= 5" class="mt-1 space-y-0.5 font-mono text-xs">
+                  <li v-for="d in client.blockedDomains" :key="d">{{ d }}</li>
+                </ul>
+              </div>
+            </CardContent>
+          </Card>
+
           <!-- Source IP -->
           <Card>
             <CardHeader class="flex-row items-center justify-between space-y-0 pb-3">
@@ -536,6 +568,7 @@ function eventTypeVariant(type) {
     <DeviceLimitDialog v-model:open="deviceLimitOpen" :client="client" @save="saveDeviceLimit" />
     <BandwidthLimitDialog v-model:open="bandwidthOpen" :client="client" @save="saveBandwidth" />
     <SourceIpDialog v-model:open="sourceIpOpen" :client="client" @save="saveSourceIp" />
+    <BlockedDomainsDialog v-model:open="blockedDomainsOpen" :client="client" @save="saveBlockedDomains" />
     <LogDialog v-model:open="logOpen" :client="client" @changed="refresh" />
     <QrDialog v-model:open="qrOpen" :client="client" />
     <DeleteClientDialog v-model:open="deleteOpen" :client="client" @confirm="confirmDelete" />

@@ -81,6 +81,12 @@ const clientSchema = {
       description: 'IPv4 CIDR allow-list of public source addresses. Empty array (default) means no restriction. When non-empty, the monitor disables the peer if its current `endpoint` IP from `wg show wg0 dump` does not match any CIDR.',
     },
     sourceIpDeniedAt: { type: ['string', 'null'], format: 'date-time', description: 'Set when the peer was auto-disabled because its endpoint did not match `allowedSourceIps`. Cleared on manual re-enable or allow-list update.' },
+    blockedDomains: {
+      type: 'array',
+      items: { type: 'string', example: 'youtube.com' },
+      maxItems: 50,
+      description: 'Per-peer domain block-list. Patterns: `youtube.com` (matches the bare domain and every subdomain via substring), `*.facebook.com` (subdomains only), `*ads*` (free substring). Enforced via iptables string match on TLS SNI / HTTP Host / DNS payload (TCP 443, 80, 53 + UDP 53). REJECT for TCP, DROP for UDP.',
+    },
   },
   required: ['id', 'name', 'enabled', 'address', 'publicKey', 'createdAt', 'updatedAt'],
 };
@@ -293,6 +299,12 @@ function buildSpec(settings = {}) {
                       maxItems: 50,
                       description: 'IPv4 / CIDR allow-list. Empty array disables the check.',
                     },
+                    blockedDomains: {
+                      type: 'array',
+                      items: { type: 'string', example: 'youtube.com' },
+                      maxItems: 50,
+                      description: 'Per-peer domain block-list. See PUT /blocked-domains for pattern semantics.',
+                    },
                   },
                   required: ['name'],
                 },
@@ -500,6 +512,41 @@ function buildSpec(settings = {}) {
           },
           responses: {
             204: { description: 'Bandwidth limit saved.' },
+            401: { description: 'Not logged in.' },
+            404: { description: 'Client not found.' },
+          },
+        },
+      },
+      '/api/wireguard/client/{clientId}/blocked-domains': {
+        parameters: [
+          {
+            name: 'clientId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' },
+          },
+        ],
+        put: {
+          tags: ['Limits'],
+          summary: 'Set the per-peer blocked-domains list',
+          description: 'Each pattern is converted to an iptables `-m string` substring match: `youtube.com` matches the bare domain and any subdomain (because the SNI/Host bytes contain that substring); `*.example.com` matches subdomains only; `*ads*` matches anywhere. Enforced for TCP 443 (TLS SNI), TCP 80 (HTTP Host), and DNS port 53 (TCP+UDP) via REJECT/DROP. Limitations: DoH/DoT (encrypted DNS), TLS Encrypted ClientHello (ECH), and DNS-by-IP all bypass this. Substring matching can also produce false positives if a benign hostname literally contains the blocked string. Empty array disables blocking for the peer (default).',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    blockedDomains: {
+                      type: 'array',
+                      items: { type: 'string', example: 'youtube.com' },
+                      maxItems: 50,
+                    },
+                  },
+                  required: ['blockedDomains'],
+                },
+              },
+            },
+          },
+          responses: {
+            204: { description: 'Block-list saved.' },
             401: { description: 'Not logged in.' },
             404: { description: 'Client not found.' },
           },

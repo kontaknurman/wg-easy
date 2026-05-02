@@ -16,6 +16,7 @@ import DeviceLimitDialog from '@/components/DeviceLimitDialog.vue';
 import BandwidthLimitDialog from '@/components/BandwidthLimitDialog.vue';
 import LogDialog from '@/components/LogDialog.vue';
 import SourceIpDialog from '@/components/SourceIpDialog.vue';
+import BlockedDomainsDialog from '@/components/BlockedDomainsDialog.vue';
 import QrDialog from '@/components/QrDialog.vue';
 import { HugeiconsIcon } from '@hugeicons/vue';
 import { UserAdd01Icon, UserMultiple02Icon } from '@hugeicons/core-free-icons';
@@ -35,6 +36,7 @@ const deviceLimitClient = ref(null);
 const bandwidthLimitClient = ref(null);
 const logClient = ref(null);
 const sourceIpClient = ref(null);
+const blockedDomainsClient = ref(null);
 const qrClient = ref(null);
 
 let pollTimer = null;
@@ -131,6 +133,19 @@ async function saveSourceIp(allowedSourceIps) {
   } catch (err) { toastError(err); }
 }
 
+async function saveBlockedDomains(blockedDomains) {
+  if (!blockedDomainsClient.value) return;
+  try {
+    await api.updateClientBlockedDomains({ clientId: blockedDomainsClient.value.id, blockedDomains });
+    toast({
+      title: blockedDomains.length > 0 ? 'Blocked websites saved' : 'Block-list cleared',
+      description: blockedDomains.length > 0 ? `${blockedDomains.length} pattern${blockedDomains.length === 1 ? '' : 's'} active.` : undefined,
+    });
+    blockedDomainsClient.value = null;
+    await refresh();
+  } catch (err) { toastError(err); }
+}
+
 onMounted(() => {
   refresh();
   pollTimer = setInterval(refresh, 2000);
@@ -189,6 +204,7 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer); });
             @bandwidth-limit="bandwidthLimitClient = $event"
             @log="logClient = $event"
             @source-ip="sourceIpClient = $event"
+            @blocked-domains="blockedDomainsClient = $event"
             @delete="deleteClient = $event" @qr="qrClient = $event"
             @error="toastError" />
         </div>
@@ -218,6 +234,9 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer); });
     <SourceIpDialog
       :open="!!sourceIpClient" :client="sourceIpClient"
       @update:open="(v) => { if (!v) sourceIpClient = null }" @save="saveSourceIp" />
+    <BlockedDomainsDialog
+      :open="!!blockedDomainsClient" :client="blockedDomainsClient"
+      @update:open="(v) => { if (!v) blockedDomainsClient = null }" @save="saveBlockedDomains" />
     <QrDialog
       :open="!!qrClient" :client="qrClient"
       @update:open="(v) => { if (!v) qrClient = null }" />

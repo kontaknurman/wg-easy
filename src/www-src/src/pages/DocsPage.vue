@@ -53,6 +53,7 @@ const endpoints = {
     { method: 'PUT', path: '/api/wireguard/client/:id/max-devices', desc: 'Set the maximum concurrent devices. 0 disables enforcement. When exceeded, the peer is auto-disabled and deviceLimitExceededAt is set.' },
     { method: 'PUT', path: '/api/wireguard/client/:id/bandwidth-limit', desc: 'Set per-peer bandwidth cap in Mbps (0 = unlimited). Applied with Linux Traffic Control (tc HTB egress + ingress police).' },
     { method: 'PUT', path: '/api/wireguard/client/:id/allowed-source-ips', desc: 'Set per-peer public-IP allow-list (CIDR). Empty = no restriction. Endpoint outside the list auto-disables the peer.' },
+    { method: 'PUT', path: '/api/wireguard/client/:id/blocked-domains', desc: 'Set per-peer domain block-list. Patterns: bare domain (matches it + subdomains), *.foo.com (subdomains only), *str* (free substring).' },
   ],
   logging: [
     { method: 'PUT', path: '/api/wireguard/client/:id/logging', desc: 'Enable/disable per-peer connection metadata logging. Body: { loggingEnabled: bool }.' },
@@ -254,6 +255,33 @@ curl -N -b cookies.txt http://localhost:51821/api/wireguard/client/CLIENT_ID/log
             </CardContent>
           </Card>
 
+          <Card id="blocked-domains-detail">
+            <CardHeader>
+              <CardTitle>Blocked websites</CardTitle>
+              <CardDescription>Per-peer content blocking via iptables string match.</CardDescription>
+            </CardHeader>
+            <CardContent class="space-y-3 text-sm text-muted-foreground">
+              <p>Each pattern is converted to a substring fed to <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">iptables -m string --algo bm --string "&lt;sub&gt;"</code>. The kernel rejects packets that contain that substring on:</p>
+              <ul class="list-disc pl-5 space-y-1">
+                <li><strong>TCP port 443</strong> (TLS Client Hello → SNI byte-string), <code>REJECT</code> with TCP reset</li>
+                <li><strong>TCP port 80</strong> (HTTP <code>Host:</code> header), <code>REJECT</code> with TCP reset</li>
+                <li><strong>UDP / TCP port 53</strong> (DNS query payload), <code>DROP</code> / <code>REJECT</code></li>
+              </ul>
+              <p>Pattern semantics:</p>
+              <ul class="list-disc pl-5 space-y-1">
+                <li><code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">youtube.com</code> blocks <code>youtube.com</code> AND any subdomain (because the SNI/Host bytes contain that substring).</li>
+                <li><code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">*.facebook.com</code> blocks subdomains only (matched substring is <code>.facebook.com</code> with the leading dot).</li>
+                <li><code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">*ads*</code> blocks anything containing <code>ads</code> in the SNI/Host/DNS payload.</li>
+              </ul>
+              <p class="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-300">
+                <strong>Limitations:</strong> DoH / DoT (encrypted DNS) and TLS Encrypted ClientHello bypass this filter; pure IP-only traffic obviously isn't matched. Substring matching can over-block — blocking <code>example</code> would also catch <code>noexample.com</code> in any payload field.
+              </p>
+              <pre class="rounded-lg bg-zinc-900 p-4 text-xs leading-relaxed text-zinc-100 overflow-x-auto">curl -b cookies.txt -X PUT http://localhost:51821/api/wireguard/client/CLIENT_ID/blocked-domains \
+  -H "Content-Type: application/json" \
+  -d '{"blockedDomains": ["youtube.com", "*.facebook.com", "*ads*"]}'</pre>
+            </CardContent>
+          </Card>
+
           <Card id="source-ip-detail">
             <CardHeader>
               <CardTitle>Source IP allow-list</CardTitle>
@@ -377,6 +405,7 @@ curl -N -b cookies.txt http://localhost:51821/api/wireguard/client/CLIENT_ID/log
                       <tr><td class="px-3 py-2 font-mono text-xs">loggingEnabled</td><td class="px-3 py-2 text-muted-foreground">boolean</td><td class="px-3 py-2 text-muted-foreground">When true, log connection metadata for this peer.</td></tr>
                       <tr><td class="px-3 py-2 font-mono text-xs">allowedSourceIps</td><td class="px-3 py-2 text-muted-foreground">string[]</td><td class="px-3 py-2 text-muted-foreground">IPv4 / CIDR allow-list. Empty = no restriction.</td></tr>
                       <tr><td class="px-3 py-2 font-mono text-xs">sourceIpDeniedAt</td><td class="px-3 py-2 text-muted-foreground">datetime|null</td><td class="px-3 py-2 text-muted-foreground">Last time the peer was auto-disabled by the IP allow-list.</td></tr>
+                      <tr><td class="px-3 py-2 font-mono text-xs">blockedDomains</td><td class="px-3 py-2 text-muted-foreground">string[]</td><td class="px-3 py-2 text-muted-foreground">Domain patterns blocked at SNI/Host/DNS layer.</td></tr>
                       <tr><td class="px-3 py-2 font-mono text-xs">latestHandshakeAt</td><td class="px-3 py-2 text-muted-foreground">datetime|null</td><td class="px-3 py-2 text-muted-foreground">Last handshake timestamp.</td></tr>
                       <tr><td class="px-3 py-2 font-mono text-xs">transferRx, transferTx</td><td class="px-3 py-2 text-muted-foreground">int|null</td><td class="px-3 py-2 text-muted-foreground">Cumulative bytes.</td></tr>
                     </tbody>
