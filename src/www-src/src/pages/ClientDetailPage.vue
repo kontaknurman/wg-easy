@@ -5,7 +5,9 @@ import {
 import { useRoute, useRouter } from 'vue-router';
 import { api } from '@/api/client';
 import { toast, toastError } from '@/lib/toast';
-import { formatBytes, formatDateTime, formatRelative } from '@/lib/utils';
+import {
+  formatBytes, formatDateTime, formatRelative, formatInTimezone,
+} from '@/lib/utils';
 import AppHeader from '@/components/AppHeader.vue';
 import Card from '@/components/ui/Card.vue';
 import CardHeader from '@/components/ui/CardHeader.vue';
@@ -202,6 +204,12 @@ const sourceIpSummary = computed(() => {
   const list = client.value.allowedSourceIps;
   return list.length === 1 ? list[0] : `${list.length} entries`;
 });
+
+const timezone = computed(() => client.value?.schedule?.timezone || 'UTC');
+
+function fmtEventTime(ts) {
+  return formatInTimezone(ts, timezone.value);
+}
 </script>
 
 <template>
@@ -252,6 +260,10 @@ const sourceIpSummary = computed(() => {
                   <span v-if="client.latestHandshakeAt">Last handshake: {{ formatRelative(client.latestHandshakeAt) }}</span>
                   <span v-if="client.transferTx">↓ {{ formatBytes(client.transferTx) }}</span>
                   <span v-if="client.transferRx">↑ {{ formatBytes(client.transferRx) }}</span>
+                  <button class="hover:text-foreground hover:underline" :title="`Timestamps shown in ${timezone}. Click to change.`"
+                          @click="scheduleOpen = true">
+                    TZ: {{ timezone }}
+                  </button>
                 </div>
               </div>
             </div>
@@ -302,9 +314,10 @@ const sourceIpSummary = computed(() => {
                   <code v-if="e.endpoint" class="font-mono text-xs">{{ e.endpoint }}</code>
                   <span v-if="e.reason === 'replaced'" class="text-[10px] uppercase text-amber-700 dark:text-amber-400">replaced</span>
                 </div>
-                <span class="text-xs text-muted-foreground tabular-nums shrink-0" :title="formatDateTime(e.ts)">
-                  {{ formatRelative(e.ts) }}
-                </span>
+                <div class="text-right text-xs shrink-0 text-muted-foreground tabular-nums">
+                  <div :title="fmtEventTime(e.ts)">{{ formatRelative(e.ts) }}</div>
+                  <div class="text-[10px] opacity-70">{{ fmtEventTime(e.ts) }}</div>
+                </div>
               </li>
             </ul>
           </CardContent>

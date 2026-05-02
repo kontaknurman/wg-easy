@@ -247,6 +247,9 @@ module.exports = class Server {
         await WireGuard.getClient({ clientId });
         return { events: WireGuard.getConnectionEvents(clientId) };
       }))
+      .get('/api/wireguard/capture-status', Util.promisify(async () => {
+        return WireGuard.getCaptureStatus();
+      }))
       .get('/api/wireguard/client/:clientId/log/stream', (req, res) => {
         const { clientId } = req.params;
         Promise.resolve(WireGuard.getClient({ clientId })).then(() => {

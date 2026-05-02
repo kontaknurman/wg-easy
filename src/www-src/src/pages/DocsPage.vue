@@ -224,6 +224,8 @@ curl -b cookies.txt -X PUT http://localhost:51821/api/wireguard/client/CLIENT_ID
 # Stream events
 curl -N -b cookies.txt http://localhost:51821/api/wireguard/client/CLIENT_ID/log/stream</pre>
               <p class="text-xs">Requires <code class="rounded bg-muted px-1 py-0.5 text-[11px] text-foreground">conntrack-tools</code> and <code class="rounded bg-muted px-1 py-0.5 text-[11px] text-foreground">tshark</code> on the host (both are in the bundled Dockerfile).</p>
+              <p class="text-xs">A 30-second supervisor watches both processes and respawns them if they exit while at least one peer still has logging enabled, so a transient capture crash recovers without manual intervention. The dashboard log dialog also shows a live status dot (green = streaming, amber = reconnecting, red = disconnected) and a "Reconnect" link to re-establish the SSE.</p>
+              <p class="text-xs">Timestamps in the log and the connection history are formatted in the per-config <code class="rounded bg-muted px-1 py-0.5 text-[11px] text-foreground">schedule.timezone</code>. Change it from the schedule editor (the "TZ" chip on the detail page is a shortcut).</p>
             </CardContent>
           </Card>
 
