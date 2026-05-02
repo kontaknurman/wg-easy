@@ -18,6 +18,7 @@ import Select from '@/components/ui/Select.vue';
 import { api } from '@/api/client';
 import { toastError } from '@/lib/toast';
 import { listTimezones } from '@/lib/utils';
+import { attachLogStream, detachLogStream } from '@/lib/logStream';
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -25,13 +26,17 @@ const props = defineProps({
 });
 const emit = defineEmits(['update:open']);
 
-const LIVE_CAP = 500;        // events kept in the live tab
-const HISTORY_CAP = 2000;    // events fetched per History "Load"
+const HISTORY_CAP = 2000; // events fetched per History "Load"
 
-const events = ref([]);
+// The live event stream is shared across consumers (this dialog + the inline
+// preview on the detail page). We attach to the shared store while the dialog
+// is open so we never race against another EventSource to the same peer.
+const liveStore = ref(null);
+const events = computed(() => (liveStore.value ? liveStore.value.events.value : []));
+const streamState = computed(() => (liveStore.value ? liveStore.value.streamState.value : 'idle'));
+
 const paused = ref(false);
 const filter = ref('');
-const streamState = ref('idle');
 const mode = ref('live');
 const historyEvents = ref([]);
 const historyLoading = ref(false);
@@ -40,9 +45,8 @@ const historyFrom = ref('');
 const historyTo = ref('');
 const displayTz = ref('');
 
-let evtSource = null;
-let pendingEvents = [];
-let flushHandle = null;
+// Tracks the peer id we currently hold a refcount for, so we can detach cleanly.
+let attachedId = null;
 
 const peerTimezone = computed(() => props.client?.schedule?.timezone || 'UTC');
 const timezone = computed(() => displayTz.value || peerTimezone.value);
@@ -82,98 +86,56 @@ function fmtTime(ts) {
 
 function setOpen(v) { emit('update:open', v); }
 
-function closeStream() {
-  if (evtSource) {
-    try { evtSource.close(); } catch { /* ignore */ }
-    evtSource = null;
+// Sync subscription with the shared store. Attached when dialog open AND
+// peer has logging enabled; detached otherwise. Detail-page inline preview
+// holds its own ref count so the EventSource stays alive across dialog
+// open/close cycles.
+function syncSubscription() {
+  const wantId = (props.open && props.client && props.client.loggingEnabled)
+    ? props.client.id
+    : null;
+  if (wantId === attachedId) return;
+  if (attachedId) {
+    detachLogStream(attachedId);
+    attachedId = null;
+    liveStore.value = null;
   }
-  if (flushHandle) {
-    cancelAnimationFrame(flushHandle);
-    flushHandle = null;
+  if (wantId) {
+    liveStore.value = attachLogStream(wantId);
+    attachedId = wantId;
   }
-  pendingEvents = [];
-  streamState.value = 'idle';
-}
-
-function flushPending() {
-  flushHandle = null;
-  if (paused.value || pendingEvents.length === 0) {
-    pendingEvents = [];
-    return;
-  }
-  // Single push of the whole batch — one Vue reactivity cycle for N events.
-  events.value.push(...pendingEvents);
-  pendingEvents = [];
-  if (events.value.length > LIVE_CAP) {
-    events.value.splice(0, events.value.length - LIVE_CAP);
-  }
-}
-
-function openStream() {
-  closeStream();
-  if (!props.client || typeof window === 'undefined' || !window.EventSource) return;
-  streamState.value = 'connecting';
-  evtSource = new EventSource(api.logStreamUrl({ clientId: props.client.id }));
-  evtSource.onopen = () => { streamState.value = 'open'; };
-  evtSource.onmessage = (e) => {
-    streamState.value = 'open';
-    if (paused.value) return;
-    try {
-      const ev = JSON.parse(e.data);
-      pendingEvents.push(ev);
-      if (!flushHandle) flushHandle = requestAnimationFrame(flushPending);
-    } catch { /* ignore malformed line */ }
-  };
-  evtSource.onerror = () => {
-    if (evtSource && evtSource.readyState === 2) streamState.value = 'failed';
-    else streamState.value = 'reconnecting';
-  };
 }
 
 watch(
   () => props.client?.id,
   (id) => {
-    events.value = [];
     historyEvents.value = [];
     mode.value = 'live';
     paused.value = false;
     filter.value = '';
     displayTz.value = loadStoredTz(id);
+    syncSubscription();
   },
   { immediate: true },
 );
 
 watch(displayTz, (v) => storeTz(props.client?.id, v));
 
-watch(
-  () => props.open,
-  (open) => {
-    if (!open || !props.client) {
-      closeStream();
-      return;
-    }
-    if (props.client.loggingEnabled) openStream();
-  },
-  { immediate: true },
-);
+watch(() => props.open, syncSubscription, { immediate: true });
+watch(() => props.client?.loggingEnabled, syncSubscription);
 
-watch(
-  () => props.client?.loggingEnabled,
-  (logging) => {
-    if (!props.open) return;
-    if (logging) openStream();
-    else closeStream();
-  },
-);
+onUnmounted(() => {
+  if (attachedId) {
+    detachLogStream(attachedId);
+    attachedId = null;
+  }
+});
 
-onUnmounted(() => closeStream());
-
-function clearEvents() { events.value = []; }
+function clearEvents() {
+  if (liveStore.value) liveStore.value.clear();
+}
 function togglePause() {
   paused.value = !paused.value;
-  if (!paused.value && pendingEvents.length > 0 && !flushHandle) {
-    flushHandle = requestAnimationFrame(flushPending);
-  }
 }
 
 function rangeToBounds(r) {
@@ -251,8 +213,7 @@ function badgeVariant(type) {
 }
 
 function reconnect() {
-  events.value = [];
-  openStream();
+  if (liveStore.value) liveStore.value.reconnect();
 }
 </script>
 
