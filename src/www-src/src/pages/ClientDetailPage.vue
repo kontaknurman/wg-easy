@@ -1,6 +1,6 @@
 <script setup>
 import {
-  ref, computed, onMounted, onUnmounted, watch,
+  ref, shallowRef, computed, onMounted, onUnmounted, watch,
 } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { api } from '@/api/client';
@@ -270,7 +270,9 @@ function fmtEventTime(ts) {
 // shared with) the one read by the "Open full log" dialog. Without sharing,
 // two separate EventSources to the same path occasionally diverged: the
 // inline kept receiving events while the dialog stopped.
-const liveStore = ref(null);
+// shallowRef so the store object isn't reactive-wrapped — otherwise inner
+// refs auto-unwrap on property access and `.value` returns undefined.
+const liveStore = shallowRef(null);
 const liveEvents = computed(() => (liveStore.value ? liveStore.value.events.value : []));
 const streamState = computed(() => (liveStore.value ? liveStore.value.streamState.value : 'idle'));
 
