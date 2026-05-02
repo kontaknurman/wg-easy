@@ -122,26 +122,43 @@ watch(displayTz, (v) => {
   storeTz(props.client?.id, v);
 });
 
-// Stream lifecycle reacts to dialog open + logging toggle without touching
-// the user's view state (mode, events, filter, picked timezone).
+// Stream lifecycle is split per concern so a parent re-fetch (which produces
+// new client objects on every poll) doesn't accidentally tear down or
+// duplicate the stream:
+//
+//   1. dialog open / close      → (re)connect or disconnect
+//   2. loggingEnabled toggle    → start or stop the SSE while still open
+//   3. retentionDays change     → only mirror the input; never touches stream
+//
 watch(
-  [
-    () => props.open,
-    () => props.client?.id,
-    () => props.client?.loggingEnabled,
-    () => props.client?.logRetentionDays,
-  ],
-  () => {
-    if (!props.open || !props.client) {
+  () => props.open,
+  (open) => {
+    if (!open || !props.client) {
       closeStream();
       return;
     }
     enabled.value = !!props.client.loggingEnabled;
     retentionDraft.value = props.client.logRetentionDays || 0;
-    if (enabled.value && !evtSource) openStream();
-    if (!enabled.value) closeStream();
+    if (enabled.value) openStream();
   },
   { immediate: true },
+);
+
+watch(
+  () => props.client?.loggingEnabled,
+  (logging) => {
+    if (!props.open) return;
+    enabled.value = !!logging;
+    if (logging) openStream();
+    else closeStream();
+  },
+);
+
+watch(
+  () => props.client?.logRetentionDays,
+  (days) => {
+    if (props.open) retentionDraft.value = days || 0;
+  },
 );
 
 onUnmounted(() => closeStream());
