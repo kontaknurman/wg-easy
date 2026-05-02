@@ -74,6 +74,12 @@ const clientSchema = {
     },
     loggingEnabled: { type: 'boolean', description: 'When true, the server captures connection events (conntrack) and hostname events (DNS / TLS SNI / HTTP Host via tshark) for this peer and exposes them on the SSE stream.' },
     logBufferSize: { type: 'integer', description: 'Number of recent log events held in the in-memory ring buffer (max ~500).' },
+    logRetentionDays: {
+      type: 'integer',
+      minimum: 0,
+      maximum: 365,
+      description: 'When greater than zero, every captured log event is appended to a per-peer NDJSON file under WG_PATH/logs/<clientId>.ndjson. An hourly pruner discards entries older than this many days. 0 (default) disables disk persistence — only the in-memory ring buffer is kept.',
+    },
     allowedSourceIps: {
       type: 'array',
       items: { type: 'string', example: '203.0.113.5/32' },
@@ -81,6 +87,12 @@ const clientSchema = {
       description: 'IPv4 CIDR allow-list of public source addresses. Empty array (default) means no restriction. When non-empty, the monitor disables the peer if its current `endpoint` IP from `wg show wg0 dump` does not match any CIDR.',
     },
     sourceIpDeniedAt: { type: ['string', 'null'], format: 'date-time', description: 'Set when the peer was auto-disabled because its endpoint did not match `allowedSourceIps`. Cleared on manual re-enable or allow-list update.' },
+    blockedDomains: {
+      type: 'array',
+      items: { type: 'string', example: 'youtube.com' },
+      maxItems: 50,
+      description: 'Per-peer domain block-list. Patterns: `youtube.com` (matches the bare domain and every subdomain via substring), `*.facebook.com` (subdomains only), `*ads*` (free substring). Enforced via iptables string match on TLS SNI / HTTP Host / DNS payload (TCP 443, 80, 53 + UDP 53). REJECT for TCP, DROP for UDP.',
+    },
   },
   required: ['id', 'name', 'enabled', 'address', 'publicKey', 'createdAt', 'updatedAt'],
 };
@@ -292,6 +304,12 @@ function buildSpec(settings = {}) {
                       items: { type: 'string', example: '203.0.113.5/32' },
                       maxItems: 50,
                       description: 'IPv4 / CIDR allow-list. Empty array disables the check.',
+                    },
+                    blockedDomains: {
+                      type: 'array',
+                      items: { type: 'string', example: 'youtube.com' },
+                      maxItems: 50,
+                      description: 'Per-peer domain block-list. See PUT /blocked-domains for pattern semantics.',
                     },
                   },
                   required: ['name'],
@@ -505,6 +523,41 @@ function buildSpec(settings = {}) {
           },
         },
       },
+      '/api/wireguard/client/{clientId}/blocked-domains': {
+        parameters: [
+          {
+            name: 'clientId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' },
+          },
+        ],
+        put: {
+          tags: ['Limits'],
+          summary: 'Set the per-peer blocked-domains list',
+          description: 'Each pattern is converted to an iptables `-m string` substring match: `youtube.com` matches the bare domain and any subdomain (because the SNI/Host bytes contain that substring); `*.example.com` matches subdomains only; `*ads*` matches anywhere. Enforced for TCP 443 (TLS SNI), TCP 80 (HTTP Host), and DNS port 53 (TCP+UDP) via REJECT/DROP. Limitations: DoH/DoT (encrypted DNS), TLS Encrypted ClientHello (ECH), and DNS-by-IP all bypass this. Substring matching can also produce false positives if a benign hostname literally contains the blocked string. Empty array disables blocking for the peer (default).',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    blockedDomains: {
+                      type: 'array',
+                      items: { type: 'string', example: 'youtube.com' },
+                      maxItems: 50,
+                    },
+                  },
+                  required: ['blockedDomains'],
+                },
+              },
+            },
+          },
+          responses: {
+            204: { description: 'Block-list saved.' },
+            401: { description: 'Not logged in.' },
+            404: { description: 'Client not found.' },
+          },
+        },
+      },
       '/api/wireguard/client/{clientId}/allowed-source-ips': {
         parameters: [
           {
@@ -574,11 +627,17 @@ function buildSpec(settings = {}) {
           {
             name: 'clientId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' },
           },
+          {
+            name: 'tz',
+            in: 'query',
+            schema: { type: 'string', example: 'Asia/Jakarta' },
+            description: 'IANA timezone used to populate `localTime` on each event. Falls back to the peer schedule timezone, then UTC. `ts` itself always remains UTC ISO 8601.',
+          },
         ],
         get: {
           tags: ['Logging'],
           summary: 'Per-peer connection history (connect / disconnect / endpoint changes)',
-          description: 'Returns the in-memory ring buffer (~500 events per peer) of session-level transitions. Each event has `ts` (ISO date), `type` (`connected` | `disconnected`), `endpoint`, and `ip`. `disconnected` events with `reason: "replaced"` mean the kernel handed the peer over to a new endpoint (most-recent handshake wins). Buffer is wiped on server restart.',
+          description: 'Returns `{ events, timezone }`. The events array is the in-memory ring buffer (~500 entries per peer) of session-level transitions. Each event has `ts` (UTC ISO 8601), `localTime` (formatted in the resolved timezone), `type` (`connected` | `disconnected`), `endpoint`, and `ip`. `disconnected` events with `reason: "replaced"` mean the kernel handed the peer over to a new endpoint (most-recent handshake wins). Buffer is wiped on server restart.',
           responses: {
             200: {
               description: 'Connection events.',
@@ -605,6 +664,83 @@ function buildSpec(settings = {}) {
                 },
               },
             },
+            401: { description: 'Not logged in.' },
+            404: { description: 'Client not found.' },
+          },
+        },
+      },
+      '/api/wireguard/client/{clientId}/log-retention': {
+        parameters: [
+          {
+            name: 'clientId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' },
+          },
+        ],
+        put: {
+          tags: ['Logging'],
+          summary: 'Set how many days of log events the panel persists for this peer',
+          description: 'Setting `logRetentionDays > 0` enables append-on-delivery to `WG_PATH/logs/<clientId>.ndjson`. An hourly pruner trims events older than the configured window (and caps the file at ~100,000 events). Setting it back to 0 deletes the file.',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: { logRetentionDays: { type: 'integer', minimum: 0, maximum: 365 } },
+                  required: ['logRetentionDays'],
+                },
+              },
+            },
+          },
+          responses: {
+            204: { description: 'Saved.' },
+            401: { description: 'Not logged in.' },
+            404: { description: 'Client not found.' },
+          },
+        },
+      },
+      '/api/wireguard/capture-status': {
+        get: {
+          tags: ['Logging'],
+          summary: 'Live status of the global capture processes',
+          description: 'Useful for diagnosing why the connection log is empty. Returns `{ wanted, conntrackRunning, tsharkRunning }` — `wanted` is true when at least one peer has logging enabled, the other two reflect whether each background process is currently alive. The supervisor restarts dead processes within 30 seconds when `wanted` is true.',
+          responses: {
+            200: { description: 'Current capture status.', content: { 'application/json': { schema: { type: 'object' } } } },
+            401: { description: 'Not logged in.' },
+          },
+        },
+      },
+      '/api/wireguard/client/{clientId}/log/history': {
+        parameters: [
+          {
+            name: 'clientId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' },
+          },
+          {
+            name: 'from', in: 'query', schema: { type: 'string', format: 'date-time' }, description: 'Lower bound (inclusive) for `ts`.',
+          },
+          {
+            name: 'to', in: 'query', schema: { type: 'string', format: 'date-time' }, description: 'Upper bound (inclusive) for `ts`.',
+          },
+          {
+            name: 'limit',
+            in: 'query',
+            schema: {
+              type: 'integer', minimum: 1, maximum: 50000, default: 5000,
+            },
+            description: 'Max events to return. The newest events are kept when the cap is hit.',
+          },
+          {
+            name: 'tz',
+            in: 'query',
+            schema: { type: 'string', example: 'Asia/Jakarta' },
+            description: 'IANA timezone applied to populate `localTime` on each event. Falls back to the peer schedule timezone, then UTC. `ts` itself always remains UTC ISO 8601.',
+          },
+        ],
+        get: {
+          tags: ['Logging'],
+          summary: 'Read persisted log events for this peer (NDJSON file)',
+          description: 'Returns `{ events, timezone }`. Events are sorted oldest → newest, capped by `limit`. Each event keeps the original capture fields (`ts`, `type`, `srcIp`, `dstIp`, `dstPort`, `protocol`, optional `hostname`) and adds `localTime` formatted in the resolved timezone. Returns an empty array when the peer has no persisted file (e.g. retention is disabled or no events have arrived yet).',
+          responses: {
+            200: { description: 'Events.', content: { 'application/json': { schema: { type: 'object' } } } },
             401: { description: 'Not logged in.' },
             404: { description: 'Client not found.' },
           },

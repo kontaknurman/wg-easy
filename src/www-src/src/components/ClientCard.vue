@@ -4,7 +4,7 @@ import { HugeiconsIcon } from '@hugeicons/vue';
 import {
   UserCircleIcon, Edit02Icon, Clock01Icon, QrCode01Icon, Download04Icon,
   Delete02Icon, ArrowDown01Icon, ArrowUp01Icon, Shield01Icon, FlashIcon,
-  EyeIcon, InternetIcon,
+  EyeIcon, InternetIcon, BlockedIcon,
 } from '@hugeicons/core-free-icons';
 import Switch from '@/components/ui/Switch.vue';
 import Button from '@/components/ui/Button.vue';
@@ -16,7 +16,7 @@ import { formatBytes, formatDateTime, formatRelative } from '@/lib/utils';
 const props = defineProps({
   client: { type: Object, required: true },
 });
-const emit = defineEmits(['changed', 'schedule', 'qr', 'delete', 'device-limit', 'bandwidth-limit', 'log', 'source-ip', 'error']);
+const emit = defineEmits(['changed', 'schedule', 'qr', 'delete', 'device-limit', 'bandwidth-limit', 'log', 'source-ip', 'blocked-domains', 'error']);
 
 const editingName = ref(false);
 const editingAddress = ref(false);
@@ -38,6 +38,7 @@ const bandwidthLimitOn = computed(() => (props.client.bandwidthLimit || 0) > 0);
 const loggingOn = computed(() => !!props.client.loggingEnabled);
 const sourceIpRestrictOn = computed(() => Array.isArray(props.client.allowedSourceIps) && props.client.allowedSourceIps.length > 0);
 const sourceIpDenied = computed(() => !!props.client.sourceIpDeniedAt && !props.client.enabled);
+const blockedDomainsOn = computed(() => Array.isArray(props.client.blockedDomains) && props.client.blockedDomains.length > 0);
 
 async function startEditName() {
   nameDraft.value = props.client.name;
@@ -127,6 +128,10 @@ async function toggleEnabled(value) {
             <HugeiconsIcon :icon="InternetIcon" :size="11" :stroke-width="2" class="mr-1" />
             {{ client.allowedSourceIps.length }} IP{{ client.allowedSourceIps.length === 1 ? '' : 's' }}
           </Badge>
+          <Badge v-if="blockedDomainsOn" variant="outline" class="shrink-0">
+            <HugeiconsIcon :icon="BlockedIcon" :size="11" :stroke-width="2" class="mr-1" />
+            {{ client.blockedDomains.length }} blocked
+          </Badge>
         </div>
 
         <div class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
@@ -191,6 +196,13 @@ async function toggleEnabled(value) {
         <HugeiconsIcon :icon="InternetIcon" :size="16" :stroke-width="2" />
         <span v-if="sourceIpDenied" class="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-destructive"></span>
         <span v-else-if="sourceIpRestrictOn" class="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
+      </Button>
+
+      <Button variant="ghost" size="icon"
+        :title="blockedDomainsOn ? `Blocked websites (${client.blockedDomains.length} patterns)` : 'Blocked websites'"
+        class="relative h-8 w-8" @click="$emit('blocked-domains', client)">
+        <HugeiconsIcon :icon="BlockedIcon" :size="16" :stroke-width="2" />
+        <span v-if="blockedDomainsOn" class="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
       </Button>
 
       <Button variant="ghost" size="icon" class="h-8 w-8" title="QR code" @click="$emit('qr', client)">

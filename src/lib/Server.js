@@ -183,6 +183,7 @@ module.exports = class Server {
         const {
           name, enabled, address, schedule,
           maxDevices, bandwidthLimit, loggingEnabled, allowedSourceIps,
+          blockedDomains,
         } = req.body || {};
         return WireGuard.createClient({
           name,
@@ -193,6 +194,7 @@ module.exports = class Server {
           bandwidthLimit,
           loggingEnabled,
           allowedSourceIps,
+          blockedDomains,
         });
       }))
       .delete('/api/wireguard/client/:clientId', Util.promisify(async req => {
@@ -237,15 +239,36 @@ module.exports = class Server {
         const { loggingEnabled } = req.body;
         return WireGuard.updateClientLogging({ clientId, loggingEnabled });
       }))
+      .put('/api/wireguard/client/:clientId/log-retention', Util.promisify(async req => {
+        const { clientId } = req.params;
+        const { logRetentionDays } = req.body;
+        return WireGuard.updateClientLogRetention({ clientId, logRetentionDays });
+      }))
+      .get('/api/wireguard/client/:clientId/log/history', Util.promisify(async req => {
+        const { clientId } = req.params;
+        await WireGuard.getClient({ clientId });
+        const {
+          from, to, limit, tz,
+        } = req.query;
+        return WireGuard.getClientLogHistory(clientId, {
+          from, to, limit, tz,
+        });
+      }))
       .put('/api/wireguard/client/:clientId/allowed-source-ips', Util.promisify(async req => {
         const { clientId } = req.params;
         const { allowedSourceIps } = req.body;
         return WireGuard.updateClientAllowedSourceIps({ clientId, allowedSourceIps });
       }))
+      .put('/api/wireguard/client/:clientId/blocked-domains', Util.promisify(async req => {
+        const { clientId } = req.params;
+        const { blockedDomains } = req.body;
+        return WireGuard.updateClientBlockedDomains({ clientId, blockedDomains });
+      }))
       .get('/api/wireguard/client/:clientId/connections', Util.promisify(async req => {
         const { clientId } = req.params;
         await WireGuard.getClient({ clientId });
-        return { events: WireGuard.getConnectionEvents(clientId) };
+        const { tz } = req.query;
+        return WireGuard.getConnectionEventsWithTz(clientId, tz);
       }))
       .get('/api/wireguard/capture-status', Util.promisify(async () => {
         return WireGuard.getCaptureStatus();

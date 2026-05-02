@@ -31,6 +31,13 @@ const events = ref([]);
 const paused = ref(false);
 const filter = ref('');
 const streamState = ref('idle'); // 'idle' | 'connecting' | 'open' | 'reconnecting' | 'failed'
+const mode = ref('live'); // 'live' | 'history'
+const retentionDraft = ref(0);
+const historyEvents = ref([]);
+const historyLoading = ref(false);
+const historyRange = ref('24h'); // '1h' | '24h' | '7d' | '30d' | 'custom'
+const historyFrom = ref('');
+const historyTo = ref('');
 let evtSource = null;
 
 const timezone = computed(() => props.client?.schedule?.timezone || null);
@@ -73,14 +80,17 @@ function openStream() {
 }
 
 watch(
-  () => [props.open, props.client?.id, props.client?.loggingEnabled],
+  () => [props.open, props.client?.id, props.client?.loggingEnabled, props.client?.logRetentionDays],
   () => {
     if (!props.open || !props.client) {
       closeStream();
       return;
     }
     enabled.value = !!props.client.loggingEnabled;
+    retentionDraft.value = props.client.logRetentionDays || 0;
     events.value = [];
+    historyEvents.value = [];
+    mode.value = 'live';
     if (enabled.value) openStream();
   },
   { immediate: true },
@@ -110,14 +120,65 @@ async function setLoggingEnabled(v) {
 function clearEvents() { events.value = []; }
 function togglePause() { paused.value = !paused.value; }
 
+async function saveRetention() {
+  if (!props.client) return;
+  const days = Math.max(0, Math.min(365, parseInt(retentionDraft.value, 10) || 0));
+  retentionDraft.value = days;
+  try {
+    await api.updateClientLogRetention({ clientId: props.client.id, logRetentionDays: days });
+    toast({
+      title: days > 0 ? 'Retention saved' : 'Retention disabled',
+      description: days > 0 ? `Persisting events for ${days} day${days === 1 ? '' : 's'}.` : 'On-disk log file removed.',
+    });
+    emit('changed');
+  } catch (err) { toastError(err); }
+}
+
+function rangeToBounds(r) {
+  const now = Date.now();
+  switch (r) {
+    case '1h': return { from: new Date(now - 60 * 60 * 1000), to: new Date(now) };
+    case '24h': return { from: new Date(now - 24 * 60 * 60 * 1000), to: new Date(now) };
+    case '7d': return { from: new Date(now - 7 * 24 * 60 * 60 * 1000), to: new Date(now) };
+    case '30d': return { from: new Date(now - 30 * 24 * 60 * 60 * 1000), to: new Date(now) };
+    case 'custom': {
+      const f = historyFrom.value ? new Date(historyFrom.value) : null;
+      const t = historyTo.value ? new Date(historyTo.value) : null;
+      return { from: f, to: t };
+    }
+    default: return {};
+  }
+}
+
+async function loadHistory() {
+  if (!props.client) return;
+  historyLoading.value = true;
+  try {
+    const { from, to } = rangeToBounds(historyRange.value);
+    const r = await api.getClientLogHistory({
+      clientId: props.client.id, from, to, limit: 5000, tz: timezone.value || undefined,
+    });
+    historyEvents.value = (r.events || []);
+  } catch (err) {
+    toastError(err);
+  } finally {
+    historyLoading.value = false;
+  }
+}
+
+watch(mode, (m) => {
+  if (m === 'history' && historyEvents.value.length === 0) loadHistory();
+});
+
+const sourceEvents = computed(() => (mode.value === 'history' ? historyEvents.value : events.value));
+
 const filtered = computed(() => {
   const q = filter.value.trim().toLowerCase();
-  if (!q) return events.value;
-  return events.value.filter(e =>
-    (e.hostname || '').toLowerCase().includes(q)
+  const base = sourceEvents.value;
+  if (!q) return base;
+  return base.filter(e => (e.hostname || '').toLowerCase().includes(q)
     || (e.dstIp || '').includes(q)
-    || (e.type || '').includes(q),
-  );
+    || (e.type || '').includes(q));
 });
 
 function fmtTime(ts) {
@@ -197,7 +258,32 @@ function badgeVariant(type) {
           <Switch :model-value="enabled" @update:model-value="setLoggingEnabled" />
         </div>
 
-        <div v-if="enabled" class="grid gap-2">
+        <div v-if="enabled" class="grid gap-2 rounded-lg border p-3">
+          <div class="flex items-center justify-between gap-2">
+            <div>
+              <Label class="text-sm">Persist to disk</Label>
+              <p class="text-[11px] text-muted-foreground">
+                Days to keep on-disk history (0 = memory only, max 365). Hourly pruner trims older entries.
+              </p>
+            </div>
+            <div class="flex items-center gap-1">
+              <Input v-model.number="retentionDraft" type="number" min="0" max="365" class="h-8 w-20 text-right" />
+              <span class="text-xs text-muted-foreground">days</span>
+              <Button size="sm" variant="outline" @click="saveRetention">Save</Button>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="enabled" class="flex items-center gap-1 rounded-md border bg-muted/30 p-1 text-xs">
+          <button type="button"
+                  :class="['flex-1 rounded px-2 py-1 transition-colors', mode === 'live' ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground']"
+                  @click="mode = 'live'">Live stream</button>
+          <button type="button"
+                  :class="['flex-1 rounded px-2 py-1 transition-colors', mode === 'history' ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground']"
+                  @click="mode = 'history'">History</button>
+        </div>
+
+        <div v-if="enabled && mode === 'live'" class="grid gap-2">
           <div class="flex items-center justify-between gap-2 rounded-md border bg-muted/20 px-2 py-1 text-xs">
             <div class="flex items-center gap-2">
               <span :class="['inline-block h-2 w-2 rounded-full', streamDotClass]"></span>
@@ -219,30 +305,55 @@ function badgeVariant(type) {
               Clear
             </Button>
           </div>
+        </div>
 
-          <div class="rounded-md border bg-muted/30 max-h-[420px] overflow-y-auto font-mono text-xs">
-            <div v-if="filtered.length === 0" class="p-6 text-center text-muted-foreground">
-              <p v-if="events.length === 0">Waiting for traffic…</p>
-              <p v-else>No events match the filter.</p>
-            </div>
-            <div v-for="(e, i) in filtered" :key="i"
-                 class="flex items-start gap-2 border-b border-border/50 px-3 py-2 last:border-b-0">
-              <span class="text-muted-foreground tabular-nums">{{ fmtTime(e.ts) }}</span>
-              <Badge :variant="badgeVariant(e.type)" class="shrink-0 uppercase font-mono text-[10px]">{{ e.type }}</Badge>
-              <span v-if="e.hostname" class="flex-1 truncate flex items-center gap-1">
-                <HugeiconsIcon :icon="GlobeIcon" :size="11" :stroke-width="2" class="text-muted-foreground shrink-0" />
-                <span class="truncate">{{ e.hostname }}</span>
-              </span>
-              <span v-else class="flex-1 truncate text-muted-foreground">{{ e.dstIp }}</span>
-              <span class="text-muted-foreground shrink-0">
-                {{ e.protocol ? e.protocol + '/' : '' }}{{ e.dstPort || '?' }}
-              </span>
-            </div>
+        <div v-if="enabled && mode === 'history'" class="grid gap-2">
+          <div class="flex flex-wrap items-center gap-2 rounded-md border bg-muted/20 p-2">
+            <span class="text-xs text-muted-foreground">Range:</span>
+            <button v-for="r in ['1h', '24h', '7d', '30d', 'custom']" :key="r"
+                    type="button"
+                    :class="['rounded px-2 py-1 text-xs', historyRange === r ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground']"
+                    @click="historyRange = r">{{ r }}</button>
+            <template v-if="historyRange === 'custom'">
+              <Input v-model="historyFrom" type="datetime-local" class="h-7 w-44 text-xs" />
+              <span class="text-muted-foreground text-xs">→</span>
+              <Input v-model="historyTo" type="datetime-local" class="h-7 w-44 text-xs" />
+            </template>
+            <Button size="sm" variant="outline" :disabled="historyLoading" @click="loadHistory">
+              {{ historyLoading ? 'Loading…' : 'Load' }}
+            </Button>
+            <Input v-model="filter" placeholder="Filter…" class="ml-auto h-7 w-48 text-xs" />
           </div>
-          <p class="text-xs text-muted-foreground text-right">
-            {{ filtered.length }} / {{ events.length }} events {{ paused ? '· paused' : '' }}
+          <p v-if="(props.client?.logRetentionDays || 0) === 0"
+             class="rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-[11px] text-amber-700 dark:text-amber-300">
+            Retention is disabled — set a non-zero "Persist to disk" value above to keep events for later viewing.
           </p>
         </div>
+
+        <div v-if="enabled" class="rounded-md border bg-muted/30 max-h-[420px] overflow-y-auto font-mono text-xs">
+          <div v-if="filtered.length === 0" class="p-6 text-center text-muted-foreground">
+            <p v-if="mode === 'live' && events.length === 0">Waiting for traffic…</p>
+            <p v-else-if="mode === 'history' && historyEvents.length === 0">No events in this range.</p>
+            <p v-else>No events match the filter.</p>
+          </div>
+          <div v-for="(e, i) in filtered" :key="i"
+               class="flex items-start gap-2 border-b border-border/50 px-3 py-2 last:border-b-0">
+            <span class="text-muted-foreground tabular-nums">{{ fmtTime(e.ts) }}</span>
+            <Badge :variant="badgeVariant(e.type)" class="shrink-0 uppercase font-mono text-[10px]">{{ e.type }}</Badge>
+            <span v-if="e.hostname" class="flex-1 truncate flex items-center gap-1">
+              <HugeiconsIcon :icon="GlobeIcon" :size="11" :stroke-width="2" class="text-muted-foreground shrink-0" />
+              <span class="truncate">{{ e.hostname }}</span>
+            </span>
+            <span v-else class="flex-1 truncate text-muted-foreground">{{ e.dstIp }}</span>
+            <span class="text-muted-foreground shrink-0">
+              {{ e.protocol ? e.protocol + '/' : '' }}{{ e.dstPort || '?' }}
+            </span>
+          </div>
+        </div>
+        <p v-if="enabled" class="text-xs text-muted-foreground text-right">
+          <template v-if="mode === 'live'">{{ filtered.length }} / {{ events.length }} events {{ paused ? '· paused' : '' }}</template>
+          <template v-else>{{ filtered.length }} / {{ historyEvents.length }} events from disk</template>
+        </p>
       </div>
     </DialogContent>
   </Dialog>
