@@ -41,8 +41,6 @@ const historyTo = ref('');
 const displayTz = ref('');
 
 let evtSource = null;
-let pendingEvents = [];
-let flushHandle = null;
 
 const peerTimezone = computed(() => props.client?.schedule?.timezone || 'UTC');
 const timezone = computed(() => displayTz.value || peerTimezone.value);
@@ -87,41 +85,29 @@ function closeStream() {
     try { evtSource.close(); } catch { /* ignore */ }
     evtSource = null;
   }
-  if (flushHandle) {
-    cancelAnimationFrame(flushHandle);
-    flushHandle = null;
-  }
-  pendingEvents = [];
   streamState.value = 'idle';
-}
-
-function flushPending() {
-  flushHandle = null;
-  if (paused.value || pendingEvents.length === 0) {
-    pendingEvents = [];
-    return;
-  }
-  // Single push of the whole batch — one Vue reactivity cycle for N events.
-  events.value.push(...pendingEvents);
-  pendingEvents = [];
-  if (events.value.length > LIVE_CAP) {
-    events.value.splice(0, events.value.length - LIVE_CAP);
-  }
 }
 
 function openStream() {
   closeStream();
   if (!props.client || typeof window === 'undefined' || !window.EventSource) return;
   streamState.value = 'connecting';
-  evtSource = new EventSource(api.logStreamUrl({ clientId: props.client.id }));
+  // Cache-busting query param: belt-and-braces against any proxy / SW / browser
+  // intermediary that might coalesce or replay the SSE response. EventSource
+  // itself doesn't cache, but `?_t=...` makes the URL unique per open so any
+  // downstream cache key sees a fresh request.
+  const url = `${api.logStreamUrl({ clientId: props.client.id })}?_t=${Date.now()}`;
+  evtSource = new EventSource(url);
   evtSource.onopen = () => { streamState.value = 'open'; };
   evtSource.onmessage = (e) => {
     streamState.value = 'open';
     if (paused.value) return;
     try {
       const ev = JSON.parse(e.data);
-      pendingEvents.push(ev);
-      if (!flushHandle) flushHandle = requestAnimationFrame(flushPending);
+      events.value.push(ev);
+      if (events.value.length > LIVE_CAP) {
+        events.value.splice(0, events.value.length - LIVE_CAP);
+      }
     } catch { /* ignore malformed line */ }
   };
   evtSource.onerror = () => {
@@ -171,9 +157,6 @@ onUnmounted(() => closeStream());
 function clearEvents() { events.value = []; }
 function togglePause() {
   paused.value = !paused.value;
-  if (!paused.value && pendingEvents.length > 0 && !flushHandle) {
-    flushHandle = requestAnimationFrame(flushPending);
-  }
 }
 
 function rangeToBounds(r) {
