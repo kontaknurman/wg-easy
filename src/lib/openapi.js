@@ -569,6 +569,47 @@ function buildSpec(settings = {}) {
           },
         },
       },
+      '/api/wireguard/client/{clientId}/connections': {
+        parameters: [
+          {
+            name: 'clientId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' },
+          },
+        ],
+        get: {
+          tags: ['Logging'],
+          summary: 'Per-peer connection history (connect / disconnect / endpoint changes)',
+          description: 'Returns the in-memory ring buffer (~500 events per peer) of session-level transitions. Each event has `ts` (ISO date), `type` (`connected` | `disconnected`), `endpoint`, and `ip`. `disconnected` events with `reason: "replaced"` mean the kernel handed the peer over to a new endpoint (most-recent handshake wins). Buffer is wiped on server restart.',
+          responses: {
+            200: {
+              description: 'Connection events.',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      events: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            ts: { type: 'string', format: 'date-time' },
+                            type: { type: 'string', enum: ['connected', 'disconnected'] },
+                            endpoint: { type: ['string', 'null'] },
+                            ip: { type: ['string', 'null'] },
+                            reason: { type: 'string' },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            401: { description: 'Not logged in.' },
+            404: { description: 'Client not found.' },
+          },
+        },
+      },
       '/api/wireguard/client/{clientId}/log/stream': {
         parameters: [
           {

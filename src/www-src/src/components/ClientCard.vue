@@ -101,17 +101,21 @@ async function toggleEnabled(value) {
           <Input v-if="editingName" ref="nameInput" v-model="nameDraft"
             @keyup.enter="saveName" @keyup.escape="editingName = false" @blur="saveName"
             class="h-7 max-w-[12rem] text-sm" />
-          <button v-else class="group/edit flex items-center gap-1.5 truncate text-left text-base font-medium text-foreground hover:text-primary"
-            :title="'Created ' + formatDateTime(client.createdAt)" @click="startEditName">
-            <span class="truncate">{{ client.name }}</span>
-            <HugeiconsIcon :icon="Edit02Icon" :size="14" :stroke-width="2"
-              class="shrink-0 opacity-0 transition-opacity group-hover/edit:opacity-100 sm:opacity-0 sm:group-hover:opacity-50" />
-          </button>
-          <Badge v-if="deviceLimitTripped" variant="destructive" class="shrink-0">Limit tripped</Badge>
-          <Badge v-else-if="!client.enabled" variant="secondary" class="shrink-0">Disabled</Badge>
+          <template v-else>
+            <router-link :to="`/clients/${client.id}`"
+              :title="'Open details · created ' + formatDateTime(client.createdAt)"
+              class="truncate text-base font-medium text-foreground hover:underline">{{ client.name }}</router-link>
+            <button class="text-muted-foreground/50 hover:text-foreground"
+              title="Rename" @click="startEditName">
+              <HugeiconsIcon :icon="Edit02Icon" :size="13" :stroke-width="2" />
+            </button>
+          </template>
+          <Badge v-if="!client.enabled" variant="secondary" class="shrink-0">Disabled</Badge>
           <Badge v-else-if="scheduleEnabled && !scheduleActive" variant="warning" class="shrink-0">Off-hours</Badge>
+          <Badge v-else-if="sourceIpDenied" variant="destructive" class="shrink-0">IP denied</Badge>
+          <Badge v-else-if="deviceLimitTripped" variant="warning" class="shrink-0">Multi-device</Badge>
           <Badge v-else-if="scheduleEnabled && scheduleActive" variant="success" class="shrink-0">Scheduled</Badge>
-          <Badge v-if="deviceLimitOn && !deviceLimitTripped" variant="outline" class="shrink-0">
+          <Badge v-if="deviceLimitOn" variant="outline" class="shrink-0">
             <HugeiconsIcon :icon="Shield01Icon" :size="11" :stroke-width="2" class="mr-1" />
             Max {{ client.maxDevices }}
           </Badge>
@@ -119,8 +123,7 @@ async function toggleEnabled(value) {
             <HugeiconsIcon :icon="FlashIcon" :size="11" :stroke-width="2" class="mr-1" />
             {{ client.bandwidthLimit }} Mbps
           </Badge>
-          <Badge v-if="sourceIpDenied" variant="destructive" class="shrink-0">IP denied</Badge>
-          <Badge v-else-if="sourceIpRestrictOn" variant="outline" class="shrink-0">
+          <Badge v-if="sourceIpRestrictOn && !sourceIpDenied" variant="outline" class="shrink-0">
             <HugeiconsIcon :icon="InternetIcon" :size="11" :stroke-width="2" class="mr-1" />
             {{ client.allowedSourceIps.length }} IP{{ client.allowedSourceIps.length === 1 ? '' : 's' }}
           </Badge>

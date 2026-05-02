@@ -3,6 +3,7 @@ import LoginPage from '@/pages/LoginPage.vue';
 import DashboardPage from '@/pages/DashboardPage.vue';
 import DocsPage from '@/pages/DocsPage.vue';
 import SettingsPage from '@/pages/SettingsPage.vue';
+import ClientDetailPage from '@/pages/ClientDetailPage.vue';
 
 export const router = createRouter({
   history: createWebHistory('/'),
@@ -11,6 +12,7 @@ export const router = createRouter({
     { path: '/login', name: 'login', component: LoginPage },
     { path: '/docs', name: 'docs', component: DocsPage },
     { path: '/settings', name: 'settings', component: SettingsPage, meta: { auth: true } },
+    { path: '/clients/:id', name: 'client-detail', component: ClientDetailPage, meta: { auth: true } },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
 });

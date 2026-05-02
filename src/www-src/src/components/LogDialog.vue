@@ -1,5 +1,7 @@
 <script setup>
-import { ref, watch, computed, onUnmounted } from 'vue';
+import {
+  ref, watch, computed, onUnmounted,
+} from 'vue';
 import { HugeiconsIcon } from '@hugeicons/vue';
 import {
   EyeIcon, AlertCircleIcon, PauseIcon, PlayIcon, EraserIcon, GlobeIcon,
@@ -16,6 +18,7 @@ import Label from '@/components/ui/Label.vue';
 import Badge from '@/components/ui/Badge.vue';
 import { api } from '@/api/client';
 import { toast, toastError } from '@/lib/toast';
+import { formatTimeOnly } from '@/lib/utils';
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -27,7 +30,10 @@ const enabled = ref(false);
 const events = ref([]);
 const paused = ref(false);
 const filter = ref('');
+const streamState = ref('idle'); // 'idle' | 'connecting' | 'open' | 'reconnecting' | 'failed'
 let evtSource = null;
+
+const timezone = computed(() => props.client?.schedule?.timezone || null);
 
 function setOpen(v) { emit('update:open', v); }
 
@@ -36,6 +42,7 @@ function closeStream() {
     try { evtSource.close(); } catch { /* ignore */ }
     evtSource = null;
   }
+  streamState.value = 'idle';
 }
 
 function openStream() {
@@ -43,8 +50,11 @@ function openStream() {
   if (!props.client) return;
   if (typeof window === 'undefined' || !window.EventSource) return;
   const url = api.logStreamUrl({ clientId: props.client.id });
+  streamState.value = 'connecting';
   evtSource = new EventSource(url);
+  evtSource.onopen = () => { streamState.value = 'open'; };
   evtSource.onmessage = (e) => {
+    streamState.value = 'open';
     if (paused.value) return;
     try {
       const event = JSON.parse(e.data);
@@ -52,7 +62,14 @@ function openStream() {
       if (events.value.length > 1000) events.value.splice(0, events.value.length - 1000);
     } catch { /* ignore */ }
   };
-  evtSource.onerror = () => { /* swallow — EventSource auto-reconnects */ };
+  evtSource.onerror = () => {
+    // EventSource auto-reconnects unless readyState becomes CLOSED.
+    if (evtSource && evtSource.readyState === 2 /* CLOSED */) {
+      streamState.value = 'failed';
+    } else {
+      streamState.value = 'reconnecting';
+    }
+  };
 }
 
 watch(
@@ -104,7 +121,33 @@ const filtered = computed(() => {
 });
 
 function fmtTime(ts) {
-  return new Date(ts).toLocaleTimeString();
+  return formatTimeOnly(ts, timezone.value);
+}
+
+const streamLabel = computed(() => {
+  switch (streamState.value) {
+    case 'open': return 'Live';
+    case 'connecting': return 'Connecting…';
+    case 'reconnecting': return 'Reconnecting…';
+    case 'failed': return 'Disconnected';
+    default: return 'Idle';
+  }
+});
+
+const streamDotClass = computed(() => {
+  switch (streamState.value) {
+    case 'open': return 'bg-emerald-500';
+    case 'connecting':
+    case 'reconnecting': return 'bg-amber-500 animate-pulse';
+    case 'failed': return 'bg-destructive';
+    default: return 'bg-muted-foreground/40';
+  }
+});
+
+function reconnect() {
+  if (!enabled.value) return;
+  events.value = [];
+  openStream();
 }
 
 function badgeVariant(type) {
@@ -155,6 +198,16 @@ function badgeVariant(type) {
         </div>
 
         <div v-if="enabled" class="grid gap-2">
+          <div class="flex items-center justify-between gap-2 rounded-md border bg-muted/20 px-2 py-1 text-xs">
+            <div class="flex items-center gap-2">
+              <span :class="['inline-block h-2 w-2 rounded-full', streamDotClass]"></span>
+              <span class="font-medium">{{ streamLabel }}</span>
+              <span v-if="timezone" class="text-muted-foreground">· timezone: {{ timezone }}</span>
+            </div>
+            <button v-if="streamState === 'failed' || streamState === 'reconnecting'"
+                    type="button"
+                    class="text-primary hover:underline" @click="reconnect">Reconnect</button>
+          </div>
           <div class="flex items-center gap-2">
             <Input v-model="filter" placeholder="Filter by hostname, IP, or type…" class="h-8" />
             <Button variant="outline" size="sm" :title="paused ? 'Resume' : 'Pause'" @click="togglePause">

@@ -1,0 +1,429 @@
+<script setup>
+import {
+  ref, computed, onMounted, onUnmounted, watch,
+} from 'vue';
+import { useRoute, useRouter } from 'vue-router';
+import { api } from '@/api/client';
+import { toast, toastError } from '@/lib/toast';
+import {
+  formatBytes, formatDateTime, formatRelative, formatInTimezone,
+} from '@/lib/utils';
+import AppHeader from '@/components/AppHeader.vue';
+import Card from '@/components/ui/Card.vue';
+import CardHeader from '@/components/ui/CardHeader.vue';
+import CardTitle from '@/components/ui/CardTitle.vue';
+import CardDescription from '@/components/ui/CardDescription.vue';
+import CardContent from '@/components/ui/CardContent.vue';
+import Button from '@/components/ui/Button.vue';
+import Badge from '@/components/ui/Badge.vue';
+import Switch from '@/components/ui/Switch.vue';
+import Input from '@/components/ui/Input.vue';
+import Separator from '@/components/ui/Separator.vue';
+import ScheduleDialog from '@/components/ScheduleDialog.vue';
+import DeviceLimitDialog from '@/components/DeviceLimitDialog.vue';
+import BandwidthLimitDialog from '@/components/BandwidthLimitDialog.vue';
+import SourceIpDialog from '@/components/SourceIpDialog.vue';
+import LogDialog from '@/components/LogDialog.vue';
+import QrDialog from '@/components/QrDialog.vue';
+import DeleteClientDialog from '@/components/DeleteClientDialog.vue';
+import { HugeiconsIcon } from '@hugeicons/vue';
+import {
+  ArrowLeft01Icon, UserCircleIcon, Edit02Icon, Clock01Icon,
+  Shield01Icon, FlashIcon, EyeIcon, InternetIcon, QrCode01Icon,
+  Download04Icon, Delete02Icon, ArrowDown01Icon, ArrowUp01Icon,
+  Wifi01Icon, WifiDisconnected01Icon, RefreshIcon, AlertCircleIcon,
+} from '@hugeicons/core-free-icons';
+
+const route = useRoute();
+const router = useRouter();
+
+const client = ref(null);
+const loading = ref(true);
+const events = ref([]);
+const eventsLoading = ref(false);
+const editingName = ref(false);
+const nameDraft = ref('');
+
+const scheduleOpen = ref(false);
+const deviceLimitOpen = ref(false);
+const bandwidthOpen = ref(false);
+const sourceIpOpen = ref(false);
+const logOpen = ref(false);
+const qrOpen = ref(false);
+const deleteOpen = ref(false);
+
+let pollTimer = null;
+let eventsTimer = null;
+
+const clientId = computed(() => route.params.id);
+
+async function refresh() {
+  if (!clientId.value) return;
+  try {
+    const all = await api.getClients();
+    const found = all.find(c => c.id === clientId.value);
+    if (!found) {
+      toast({ title: 'Client not found', variant: 'destructive' });
+      router.push('/');
+      return;
+    }
+    client.value = found;
+  } catch (err) {
+    toastError(err);
+  } finally {
+    loading.value = false;
+  }
+}
+
+async function refreshEvents() {
+  if (!clientId.value) return;
+  eventsLoading.value = true;
+  try {
+    const r = await api.getClientConnections({ clientId: clientId.value });
+    events.value = r.events.slice().reverse();
+  } catch { /* ignore */ } finally {
+    eventsLoading.value = false;
+  }
+}
+
+watch(clientId, () => {
+  refresh();
+  refreshEvents();
+}, { immediate: false });
+
+onMounted(() => {
+  refresh();
+  refreshEvents();
+  pollTimer = setInterval(refresh, 3000);
+  eventsTimer = setInterval(refreshEvents, 5000);
+});
+onUnmounted(() => {
+  if (pollTimer) clearInterval(pollTimer);
+  if (eventsTimer) clearInterval(eventsTimer);
+});
+
+const isOnline = computed(() => {
+  if (!client.value || !client.value.latestHandshakeAt) return false;
+  return Date.now() - new Date(client.value.latestHandshakeAt).getTime() < 1000 * 60 * 3;
+});
+
+const scheduleEnabled = computed(() => client.value?.schedule?.enabled);
+const scheduleActive = computed(() => client.value?.scheduleActive !== false);
+const deviceLimitOn = computed(() => (client.value?.maxDevices || 0) > 0);
+const deviceLimitTripped = computed(() => !!client.value?.deviceLimitExceededAt);
+const bandwidthOn = computed(() => (client.value?.bandwidthLimit || 0) > 0);
+const sourceIpOn = computed(() => Array.isArray(client.value?.allowedSourceIps) && client.value.allowedSourceIps.length > 0);
+const sourceIpDenied = computed(() => !!client.value?.sourceIpDeniedAt && !client.value?.enabled);
+const loggingOn = computed(() => !!client.value?.loggingEnabled);
+
+function startEditName() {
+  nameDraft.value = client.value.name;
+  editingName.value = true;
+}
+async function saveName() {
+  const v = nameDraft.value.trim();
+  editingName.value = false;
+  if (!v || v === client.value.name) return;
+  try {
+    await api.updateClientName({ clientId: client.value.id, name: v });
+    await refresh();
+    toast({ title: 'Renamed' });
+  } catch (err) { toastError(err); }
+}
+
+async function setEnabled(value) {
+  if (!client.value) return;
+  try {
+    if (value) await api.enableClient({ clientId: client.value.id });
+    else await api.disableClient({ clientId: client.value.id });
+    await refresh();
+  } catch (err) { toastError(err); }
+}
+
+async function saveSchedule(schedule) {
+  try {
+    await api.updateClientSchedule({ clientId: client.value.id, schedule });
+    toast({ title: 'Schedule saved' });
+    scheduleOpen.value = false;
+    await refresh();
+  } catch (err) { toastError(err); }
+}
+async function saveDeviceLimit(maxDevices) {
+  try {
+    await api.updateClientMaxDevices({ clientId: client.value.id, maxDevices });
+    toast({ title: maxDevices > 0 ? `Max ${maxDevices} device(s)` : 'Limit removed' });
+    deviceLimitOpen.value = false;
+    await refresh();
+  } catch (err) { toastError(err); }
+}
+async function saveBandwidth(bandwidthLimit) {
+  try {
+    await api.updateClientBandwidthLimit({ clientId: client.value.id, bandwidthLimit });
+    toast({ title: bandwidthLimit > 0 ? `Capped at ${bandwidthLimit} Mbps` : 'Cap removed' });
+    bandwidthOpen.value = false;
+    await refresh();
+  } catch (err) { toastError(err); }
+}
+async function saveSourceIp(allowedSourceIps) {
+  try {
+    await api.updateClientAllowedSourceIps({ clientId: client.value.id, allowedSourceIps });
+    toast({ title: 'Source IP allow-list saved' });
+    sourceIpOpen.value = false;
+    await refresh();
+  } catch (err) { toastError(err); }
+}
+async function confirmDelete() {
+  try {
+    await api.deleteClient({ clientId: client.value.id });
+    toast({ title: 'Client deleted' });
+    router.push('/');
+  } catch (err) { toastError(err); }
+}
+
+function eventVariant(type) {
+  return type === 'connected' ? 'success' : 'secondary';
+}
+
+const dayLabels = {
+  monday: 'Mon', tuesday: 'Tue', wednesday: 'Wed', thursday: 'Thu',
+  friday: 'Fri', saturday: 'Sat', sunday: 'Sun',
+};
+
+const scheduleSummary = computed(() => {
+  const s = client.value?.schedule;
+  if (!s || !s.enabled) return 'No schedule (always allowed)';
+  const days = Object.entries(s.days || {})
+    .filter(([, d]) => d.active)
+    .map(([k, d]) => `${dayLabels[k]} ${d.start}–${d.end}`);
+  if (days.length === 0) return 'Enabled but no active day';
+  return `${days.join(' · ')} (${s.timezone})`;
+});
+
+const sourceIpSummary = computed(() => {
+  if (!sourceIpOn.value) return 'No restriction';
+  const list = client.value.allowedSourceIps;
+  return list.length === 1 ? list[0] : `${list.length} entries`;
+});
+
+const timezone = computed(() => client.value?.schedule?.timezone || 'UTC');
+
+function fmtEventTime(ts) {
+  return formatInTimezone(ts, timezone.value);
+}
+</script>
+
+<template>
+  <div class="min-h-screen bg-background">
+    <AppHeader />
+
+    <main class="container mx-auto max-w-5xl px-4 py-8">
+      <Button variant="ghost" size="sm" class="mb-2 -ml-3" @click="router.push('/')">
+        <HugeiconsIcon :icon="ArrowLeft01Icon" :size="14" :stroke-width="2" />
+        Dashboard
+      </Button>
+
+      <div v-if="loading" class="flex items-center justify-center py-16 text-muted-foreground">Loading…</div>
+
+      <div v-else-if="client" class="space-y-6">
+
+        <!-- Hero / status bar -->
+        <Card>
+          <CardContent class="flex flex-col gap-4 p-6 sm:flex-row sm:items-center">
+            <div class="flex items-center gap-4 min-w-0 flex-1">
+              <div class="relative shrink-0">
+                <div class="flex h-12 w-12 items-center justify-center rounded-full bg-muted text-muted-foreground">
+                  <HugeiconsIcon :icon="UserCircleIcon" :size="26" :stroke-width="1.5" />
+                </div>
+                <span v-if="isOnline" class="absolute -bottom-0.5 -right-0.5 flex h-3.5 w-3.5">
+                  <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60"></span>
+                  <span class="relative inline-flex h-3.5 w-3.5 rounded-full bg-emerald-500 ring-2 ring-card"></span>
+                </span>
+              </div>
+              <div class="min-w-0 flex-1">
+                <div class="flex items-center gap-2 flex-wrap">
+                  <Input v-if="editingName" v-model="nameDraft"
+                         @keyup.enter="saveName" @keyup.escape="editingName = false" @blur="saveName"
+                         autofocus class="h-8 max-w-[16rem]" />
+                  <h1 v-else class="text-2xl font-bold tracking-tight truncate">{{ client.name }}</h1>
+                  <button v-if="!editingName" @click="startEditName"
+                          class="text-muted-foreground hover:text-foreground" title="Rename">
+                    <HugeiconsIcon :icon="Edit02Icon" :size="14" :stroke-width="2" />
+                  </button>
+                  <Badge v-if="!client.enabled" variant="secondary">Disabled</Badge>
+                  <Badge v-else-if="scheduleEnabled && !scheduleActive" variant="warning">Off-hours</Badge>
+                  <Badge v-else-if="isOnline" variant="success">Online</Badge>
+                  <Badge v-else variant="outline">Offline</Badge>
+                  <Badge v-if="deviceLimitTripped && client.enabled" variant="warning">Multi-device detected</Badge>
+                </div>
+                <div class="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-sm text-muted-foreground">
+                  <span class="font-mono">{{ client.address }}</span>
+                  <span v-if="client.latestHandshakeAt">Last handshake: {{ formatRelative(client.latestHandshakeAt) }}</span>
+                  <span v-if="client.transferTx">↓ {{ formatBytes(client.transferTx) }}</span>
+                  <span v-if="client.transferRx">↑ {{ formatBytes(client.transferRx) }}</span>
+                  <button class="hover:text-foreground hover:underline" :title="`Timestamps shown in ${timezone}. Click to change.`"
+                          @click="scheduleOpen = true">
+                    TZ: {{ timezone }}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div class="flex items-center gap-2">
+              <Switch :model-value="client.enabled" @update:model-value="setEnabled" />
+              <span class="text-sm text-muted-foreground">{{ client.enabled ? 'Enabled' : 'Disabled' }}</span>
+
+              <Button variant="outline" size="sm" @click="qrOpen = true">
+                <HugeiconsIcon :icon="QrCode01Icon" :size="14" :stroke-width="2" />
+                QR
+              </Button>
+              <Button variant="outline" size="sm" :as="'a'" :href="api.configurationUrl({ clientId: client.id })">
+                <HugeiconsIcon :icon="Download04Icon" :size="14" :stroke-width="2" />
+                .conf
+              </Button>
+              <Button variant="ghost" size="icon" class="text-muted-foreground hover:text-destructive" title="Delete" @click="deleteOpen = true">
+                <HugeiconsIcon :icon="Delete02Icon" :size="16" :stroke-width="2" />
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        <!-- Connection history -->
+        <Card>
+          <CardHeader class="flex-row items-center justify-between space-y-0 pb-3">
+            <div class="flex items-center gap-2">
+              <HugeiconsIcon :icon="Wifi01Icon" :size="18" :stroke-width="2" class="text-muted-foreground" />
+              <CardTitle class="text-base">Connection history</CardTitle>
+            </div>
+            <Button variant="ghost" size="icon" class="h-8 w-8" :disabled="eventsLoading" title="Refresh" @click="refreshEvents">
+              <HugeiconsIcon :icon="RefreshIcon" :size="14" :stroke-width="2" />
+            </Button>
+          </CardHeader>
+          <CardContent>
+            <div v-if="eventsLoading && events.length === 0" class="py-6 text-center text-sm text-muted-foreground">Loading…</div>
+            <div v-else-if="events.length === 0" class="py-6 text-center text-sm text-muted-foreground">
+              No connection events recorded yet. Events are tracked from when the panel started.
+            </div>
+            <ul v-else class="divide-y rounded-md border">
+              <li v-for="(e, i) in events" :key="i"
+                  class="flex items-center justify-between gap-3 px-3 py-2 text-sm">
+                <div class="flex items-center gap-2 min-w-0">
+                  <HugeiconsIcon :icon="e.type === 'connected' ? Wifi01Icon : WifiDisconnected01Icon"
+                    :size="16" :stroke-width="2"
+                    :class="e.type === 'connected' ? 'text-emerald-600' : 'text-muted-foreground'" />
+                  <Badge :variant="eventVariant(e.type)" class="font-mono text-[10px]">{{ e.type }}</Badge>
+                  <code v-if="e.endpoint" class="font-mono text-xs">{{ e.endpoint }}</code>
+                  <span v-if="e.reason === 'replaced'" class="text-[10px] uppercase text-amber-700 dark:text-amber-400">replaced</span>
+                </div>
+                <div class="text-right text-xs shrink-0 text-muted-foreground tabular-nums">
+                  <div :title="fmtEventTime(e.ts)">{{ formatRelative(e.ts) }}</div>
+                  <div class="text-[10px] opacity-70">{{ fmtEventTime(e.ts) }}</div>
+                </div>
+              </li>
+            </ul>
+          </CardContent>
+        </Card>
+
+        <!-- Per-feature settings grid -->
+        <div class="grid gap-4 lg:grid-cols-2">
+          <!-- Schedule -->
+          <Card>
+            <CardHeader class="flex-row items-center justify-between space-y-0 pb-3">
+              <div class="flex items-center gap-2">
+                <HugeiconsIcon :icon="Clock01Icon" :size="18" :stroke-width="2" class="text-muted-foreground" />
+                <CardTitle class="text-base">Schedule</CardTitle>
+                <Badge v-if="scheduleEnabled" variant="success">on</Badge>
+              </div>
+              <Button variant="outline" size="sm" @click="scheduleOpen = true">Edit</Button>
+            </CardHeader>
+            <CardContent class="text-sm text-muted-foreground">{{ scheduleSummary }}</CardContent>
+          </Card>
+
+          <!-- Device limit -->
+          <Card>
+            <CardHeader class="flex-row items-center justify-between space-y-0 pb-3">
+              <div class="flex items-center gap-2">
+                <HugeiconsIcon :icon="Shield01Icon" :size="18" :stroke-width="2" class="text-muted-foreground" />
+                <CardTitle class="text-base">Device limit</CardTitle>
+                <Badge v-if="deviceLimitOn" variant="success">on</Badge>
+              </div>
+              <Button variant="outline" size="sm" @click="deviceLimitOpen = true">Edit</Button>
+            </CardHeader>
+            <CardContent class="text-sm text-muted-foreground">
+              <div v-if="!deviceLimitOn">No limit (any number of devices)</div>
+              <div v-else>
+                Max <span class="font-medium text-foreground">{{ client.maxDevices }}</span>
+                · currently tracked: <span class="tabular-nums">{{ client.activeDeviceCount || 0 }}</span>
+              </div>
+              <p v-if="deviceLimitTripped && client.enabled" class="mt-1 text-xs text-amber-700 dark:text-amber-400">
+                Multiple endpoints detected recently. Connection is not blocked — WireGuard automatically routes to the latest handshake.
+              </p>
+            </CardContent>
+          </Card>
+
+          <!-- Bandwidth -->
+          <Card>
+            <CardHeader class="flex-row items-center justify-between space-y-0 pb-3">
+              <div class="flex items-center gap-2">
+                <HugeiconsIcon :icon="FlashIcon" :size="18" :stroke-width="2" class="text-muted-foreground" />
+                <CardTitle class="text-base">Bandwidth limit</CardTitle>
+                <Badge v-if="bandwidthOn" variant="success">on</Badge>
+              </div>
+              <Button variant="outline" size="sm" @click="bandwidthOpen = true">Edit</Button>
+            </CardHeader>
+            <CardContent class="text-sm text-muted-foreground">
+              <span v-if="!bandwidthOn">Unlimited</span>
+              <span v-else>Capped at <span class="font-medium text-foreground">{{ client.bandwidthLimit }} Mbps</span> (symmetric)</span>
+            </CardContent>
+          </Card>
+
+          <!-- Source IP -->
+          <Card>
+            <CardHeader class="flex-row items-center justify-between space-y-0 pb-3">
+              <div class="flex items-center gap-2">
+                <HugeiconsIcon :icon="InternetIcon" :size="18" :stroke-width="2" class="text-muted-foreground" />
+                <CardTitle class="text-base">Source IP allow-list</CardTitle>
+                <Badge v-if="sourceIpOn" variant="success">on</Badge>
+                <Badge v-if="sourceIpDenied" variant="destructive">denied</Badge>
+              </div>
+              <Button variant="outline" size="sm" @click="sourceIpOpen = true">Edit</Button>
+            </CardHeader>
+            <CardContent class="text-sm text-muted-foreground">
+              <div>{{ sourceIpSummary }}</div>
+              <ul v-if="sourceIpOn && client.allowedSourceIps.length <= 5" class="mt-1 space-y-0.5 font-mono text-xs">
+                <li v-for="cidr in client.allowedSourceIps" :key="cidr">{{ cidr }}</li>
+              </ul>
+            </CardContent>
+          </Card>
+
+          <!-- Logging -->
+          <Card class="lg:col-span-2">
+            <CardHeader class="flex-row items-center justify-between space-y-0 pb-3">
+              <div class="flex items-center gap-2">
+                <HugeiconsIcon :icon="EyeIcon" :size="18" :stroke-width="2" class="text-muted-foreground" />
+                <CardTitle class="text-base">Connection log (URL / DNS / TLS metadata)</CardTitle>
+                <Badge v-if="loggingOn" variant="success">recording</Badge>
+              </div>
+              <Button variant="outline" size="sm" @click="logOpen = true">Open log</Button>
+            </CardHeader>
+            <CardContent class="text-sm text-muted-foreground">
+              <span v-if="!loggingOn">Disabled. Enable to capture destination IP/port and hostname (DNS / TLS SNI / HTTP Host) for this peer.</span>
+              <span v-else>
+                Capturing.
+                <span v-if="client.logBufferSize">Buffer holds {{ client.logBufferSize }} event(s).</span>
+              </span>
+            </CardContent>
+          </Card>
+        </div>
+
+      </div>
+    </main>
+
+    <ScheduleDialog v-model:open="scheduleOpen" :client="client" @save="saveSchedule" />
+    <DeviceLimitDialog v-model:open="deviceLimitOpen" :client="client" @save="saveDeviceLimit" />
+    <BandwidthLimitDialog v-model:open="bandwidthOpen" :client="client" @save="saveBandwidth" />
+    <SourceIpDialog v-model:open="sourceIpOpen" :client="client" @save="saveSourceIp" />
+    <LogDialog v-model:open="logOpen" :client="client" @changed="refresh" />
+    <QrDialog v-model:open="qrOpen" :client="client" />
+    <DeleteClientDialog v-model:open="deleteOpen" :client="client" @confirm="confirmDelete" />
+  </div>
+</template>

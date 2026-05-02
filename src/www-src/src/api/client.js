@@ -52,6 +52,10 @@ export const api = {
   updateClientBandwidthLimit: ({ clientId, bandwidthLimit }) => call({ method: 'PUT', path: `/wireguard/client/${clientId}/bandwidth-limit`, body: { bandwidthLimit } }),
   updateClientLogging: ({ clientId, loggingEnabled }) => call({ method: 'PUT', path: `/wireguard/client/${clientId}/logging`, body: { loggingEnabled } }),
   updateClientAllowedSourceIps: ({ clientId, allowedSourceIps }) => call({ method: 'PUT', path: `/wireguard/client/${clientId}/allowed-source-ips`, body: { allowedSourceIps } }),
+
+  getClientConnections: ({ clientId }) => call({ method: 'GET', path: `/wireguard/client/${clientId}/connections` }).then(r => ({
+    events: (r.events || []).map(e => ({ ...e, ts: e.ts ? new Date(e.ts) : null })),
+  })),
   logStreamUrl: ({ clientId }) => `/api/wireguard/client/${clientId}/log/stream`,
 
   getSettings: () => call({ method: 'GET', path: '/settings' }),

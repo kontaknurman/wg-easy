@@ -24,6 +24,43 @@ export function formatDateTime(value) {
   }).format(new Date(value));
 }
 
+export function formatInTimezone(value, timezone) {
+  if (!value) return '';
+  const date = new Date(value);
+  const opts = {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  };
+  if (timezone && timezone !== 'UTC') opts.timeZoneName = 'short';
+  if (timezone) opts.timeZone = timezone;
+  try {
+    return new Intl.DateTimeFormat(undefined, opts).format(date);
+  } catch {
+    return new Intl.DateTimeFormat(undefined, opts).format(date);
+  }
+}
+
+export function formatTimeOnly(value, timezone) {
+  if (!value) return '';
+  const date = new Date(value);
+  const opts = {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  };
+  if (timezone) opts.timeZone = timezone;
+  try {
+    return new Intl.DateTimeFormat(undefined, opts).format(date);
+  } catch {
+    return new Intl.DateTimeFormat(undefined, opts).format(date);
+  }
+}
+
 export function formatRelative(value) {
   if (!value) return 'never';
   const date = new Date(value);

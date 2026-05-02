@@ -242,6 +242,14 @@ module.exports = class Server {
         const { allowedSourceIps } = req.body;
         return WireGuard.updateClientAllowedSourceIps({ clientId, allowedSourceIps });
       }))
+      .get('/api/wireguard/client/:clientId/connections', Util.promisify(async req => {
+        const { clientId } = req.params;
+        await WireGuard.getClient({ clientId });
+        return { events: WireGuard.getConnectionEvents(clientId) };
+      }))
+      .get('/api/wireguard/capture-status', Util.promisify(async () => {
+        return WireGuard.getCaptureStatus();
+      }))
       .get('/api/wireguard/client/:clientId/log/stream', (req, res) => {
         const { clientId } = req.params;
         Promise.resolve(WireGuard.getClient({ clientId })).then(() => {
