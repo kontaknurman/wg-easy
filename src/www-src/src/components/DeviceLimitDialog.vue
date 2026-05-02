@@ -77,10 +77,11 @@ function save() {
              class="flex items-start gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
           <HugeiconsIcon :icon="AlertCircleIcon" :size="18" :stroke-width="2" class="mt-0.5 shrink-0 text-amber-600" />
           <div>
-            <p class="font-medium text-amber-700 dark:text-amber-300">Auto-disabled previously</p>
+            <p class="font-medium text-amber-700 dark:text-amber-300">Multi-device detected</p>
             <p class="text-xs text-muted-foreground">
-              Multiple devices were detected on {{ formatDateTime(exceededAt) }}. Re-enable the client (toggle in the
-              dashboard) to allow connections again. Tracking is reset on every re-enable or limit change.
+              {{ formatDateTime(exceededAt) }}: more than the configured max distinct endpoints active. The peer is
+              <strong>not</strong> blocked — WireGuard naturally serves only the most-recent handshake, so the
+              older session is already replaced. This is informational only.
             </p>
           </div>
         </div>
@@ -104,8 +105,10 @@ function save() {
             </div>
           </div>
           <p class="text-xs text-muted-foreground">
-            Detection runs every 10 seconds via <code class="rounded bg-muted px-1 py-0.5 text-[11px]">wg show wg0 dump</code>;
-            distinct peer endpoints with a fresh handshake within ~3 minutes count as concurrent devices.
+            Informational counter. WireGuard authenticates by key and a peer can only have one active endpoint at a
+            time — the most-recent handshake wins, so the older session is automatically replaced. We just count
+            distinct endpoints with fresh handshakes (last ~3 minutes) and surface a "multi-device" badge when more
+            than the configured maximum has been seen. <strong>The peer is never auto-disabled by this limit.</strong>
           </p>
         </div>
 

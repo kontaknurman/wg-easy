@@ -57,6 +57,7 @@ const endpoints = {
   logging: [
     { method: 'PUT', path: '/api/wireguard/client/:id/logging', desc: 'Enable/disable per-peer connection metadata logging. Body: { loggingEnabled: bool }.' },
     { method: 'GET', path: '/api/wireguard/client/:id/log/stream', desc: 'Server-Sent Events stream of log events (replay buffer + live).' },
+    { method: 'GET', path: '/api/wireguard/client/:id/connections', desc: 'In-memory ring buffer (~500 events) of session-level transitions: connect / disconnect / endpoint-replaced.' },
   ],
 };
 
@@ -278,27 +279,43 @@ curl -N -b cookies.txt http://localhost:51821/api/wireguard/client/CLIENT_ID/log
 
           <Card id="device-limit-detail">
             <CardHeader>
-              <CardTitle>Device limit (concurrent peers)</CardTitle>
-              <CardDescription>How the panel detects and reacts to multiple devices sharing one config.</CardDescription>
+              <CardTitle>Device limit (informational)</CardTitle>
+              <CardDescription>Detect multiple devices sharing one config without blocking the peer.</CardDescription>
             </CardHeader>
             <CardContent class="space-y-3 text-sm text-muted-foreground">
               <p>
-                WireGuard's protocol does not expose a hard "reject" hook — anyone with the private key can complete
-                a handshake. The server approximates "max devices per config" by polling
-                <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">wg show wg0 dump</code>
-                every 10 seconds and tracking the distinct
-                <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">endpoint</code> values that show a
-                handshake within the last ~3 minutes.
+                WireGuard authenticates by key and the kernel keeps at most one active endpoint per peer at any moment.
+                When a new device handshakes with the same key, the kernel immediately switches the peer's endpoint to
+                the new source — the previous device's traffic stops decrypting. <strong>"Reject old, accept new" is the
+                native behaviour.</strong> The panel does not need to disable anything for this to work.
               </p>
+              <p>What the device monitor actually does:</p>
               <ul class="list-disc pl-5 space-y-1.5">
-                <li>Set <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">maxDevices = 0</code> to disable the limit (default).</li>
-                <li>If the rolling distinct-endpoint count exceeds <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">maxDevices</code>, the peer is auto-disabled and <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">deviceLimitExceededAt</code> is set.</li>
-                <li>Re-enabling the client (via the dashboard toggle) clears the in-memory tracking and resets the counter.</li>
-                <li>Detection lag: a violating device gets cut off within ~10–60 seconds. Mobile devices roaming between Wi-Fi/4G can produce false positives.</li>
+                <li>Polls <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">wg show wg0 dump</code> every 10 seconds.</li>
+                <li>Tracks distinct endpoints with fresh handshake (last ~3 minutes). When the kernel switches endpoint and the new one stays for &gt;30s, the previous entry is dropped from tracking — a normal reconnect from a new IP no longer counts as concurrent.</li>
+                <li>If the rolling count exceeds <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">maxDevices</code>, sets <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">deviceLimitExceededAt</code> and shows a "Multi-device" badge. <strong>No auto-disable.</strong> The flag clears automatically once the count drops back below the limit.</li>
+                <li><code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">maxDevices = 0</code> disables the counter entirely (default).</li>
               </ul>
               <pre class="rounded-lg bg-zinc-900 p-4 text-xs leading-relaxed text-zinc-100 overflow-x-auto">curl -b cookies.txt -X PUT http://localhost:51821/api/wireguard/client/CLIENT_ID/max-devices \
   -H "Content-Type: application/json" \
   -d '{"maxDevices": 1}'</pre>
+            </CardContent>
+          </Card>
+
+          <Card id="connections-detail">
+            <CardHeader>
+              <CardTitle>Connection history</CardTitle>
+              <CardDescription>Per-peer session-level event log.</CardDescription>
+            </CardHeader>
+            <CardContent class="space-y-3 text-sm text-muted-foreground">
+              <p>The device monitor compares each tick's <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">wg show</code> snapshot to the previous one and records state transitions in an in-memory ring buffer (~500 events per peer):</p>
+              <ul class="list-disc pl-5 space-y-1.5">
+                <li><strong>connected</strong>: peer went from no-handshake to fresh-handshake.</li>
+                <li><strong>disconnected</strong>: peer went from fresh-handshake to stale (no handshake for &gt;3 minutes) or vanished from the dump.</li>
+                <li><strong>disconnected</strong> with <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">reason: "replaced"</code> followed by <strong>connected</strong> from a new IP: the kernel handed the peer to a different endpoint (most-recent handshake wins).</li>
+              </ul>
+              <p>Each event includes <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">ts</code>, <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">endpoint</code>, and <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">ip</code>. Buffer is wiped on server restart.</p>
+              <pre class="rounded-lg bg-zinc-900 p-4 text-xs leading-relaxed text-zinc-100 overflow-x-auto">curl -b cookies.txt http://localhost:51821/api/wireguard/client/CLIENT_ID/connections</pre>
             </CardContent>
           </Card>
 
