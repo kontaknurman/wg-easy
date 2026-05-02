@@ -1,6 +1,6 @@
 <script setup>
 import {
-  ref, watch, computed, onUnmounted,
+  ref, shallowRef, watch, computed, onUnmounted,
 } from 'vue';
 import { HugeiconsIcon } from '@hugeicons/vue';
 import {
@@ -28,10 +28,13 @@ const emit = defineEmits(['update:open']);
 
 const HISTORY_CAP = 2000; // events fetched per History "Load"
 
-// The live event stream is shared across consumers (this dialog + the inline
-// preview on the detail page). We attach to the shared store while the dialog
-// is open so we never race against another EventSource to the same peer.
-const liveStore = ref(null);
+// Shared per-peer log stream. shallowRef is REQUIRED here: a regular `ref`
+// would wrap the assigned store object with `reactive()`, which auto-unwraps
+// inner refs at top-level property access. That would turn
+// `liveStore.value.events` into the raw array (instead of the inner ref),
+// and `.value` on the array would be `undefined` — silently breaking the
+// computed below.
+const liveStore = shallowRef(null);
 const events = computed(() => (liveStore.value ? liveStore.value.events.value : []));
 const streamState = computed(() => (liveStore.value ? liveStore.value.streamState.value : 'idle'));
 
