@@ -41,7 +41,7 @@ export const api = {
       latestHandshakeAt: c.latestHandshakeAt ? new Date(c.latestHandshakeAt) : null,
     }));
   },
-  createClient: ({ name }) => call({ method: 'POST', path: '/wireguard/client', body: { name } }),
+  createClient: (payload) => call({ method: 'POST', path: '/wireguard/client', body: payload || {} }),
   deleteClient: ({ clientId }) => call({ method: 'DELETE', path: `/wireguard/client/${clientId}` }),
   enableClient: ({ clientId }) => call({ method: 'POST', path: `/wireguard/client/${clientId}/enable` }),
   disableClient: ({ clientId }) => call({ method: 'POST', path: `/wireguard/client/${clientId}/disable` }),
@@ -50,9 +50,13 @@ export const api = {
   updateClientSchedule: ({ clientId, schedule }) => call({ method: 'PUT', path: `/wireguard/client/${clientId}/schedule`, body: { schedule } }),
   updateClientMaxDevices: ({ clientId, maxDevices }) => call({ method: 'PUT', path: `/wireguard/client/${clientId}/max-devices`, body: { maxDevices } }),
   updateClientBandwidthLimit: ({ clientId, bandwidthLimit }) => call({ method: 'PUT', path: `/wireguard/client/${clientId}/bandwidth-limit`, body: { bandwidthLimit } }),
+  updateClientLogging: ({ clientId, loggingEnabled }) => call({ method: 'PUT', path: `/wireguard/client/${clientId}/logging`, body: { loggingEnabled } }),
+  updateClientAllowedSourceIps: ({ clientId, allowedSourceIps }) => call({ method: 'PUT', path: `/wireguard/client/${clientId}/allowed-source-ips`, body: { allowedSourceIps } }),
+  logStreamUrl: ({ clientId }) => `/api/wireguard/client/${clientId}/log/stream`,
 
   getSettings: () => call({ method: 'GET', path: '/settings' }),
   updateSettings: (patch) => call({ method: 'PUT', path: '/settings', body: patch }),
+  getMyIp: () => call({ method: 'GET', path: '/me/ip' }),
   qrCodeUrl: ({ clientId }) => `/api/wireguard/client/${clientId}/qrcode.svg`,
   configurationUrl: ({ clientId }) => `/api/wireguard/client/${clientId}/configuration`,
 };

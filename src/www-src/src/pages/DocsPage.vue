@@ -20,6 +20,7 @@ const sections = [
   { id: 'clients', label: 'Clients' },
   { id: 'schedule', label: 'Schedule' },
   { id: 'limits', label: 'Limits' },
+  { id: 'logging', label: 'Logging' },
   { id: 'schemas', label: 'Schemas' },
 ];
 
@@ -27,6 +28,7 @@ const endpoints = {
   meta: [
     { method: 'GET', path: '/api/release', desc: 'Numeric release identifier (matches package.json).' },
     { method: 'GET', path: '/api/openapi.json', desc: 'Full OpenAPI 3.0 specification for this API.' },
+    { method: 'GET', path: '/api/me/ip', desc: 'Returns the resolved client IP, direct socket address, Cloudflare detection result, and raw forwarding headers.' },
   ],
   session: [
     { method: 'GET', path: '/api/session', desc: 'Current session state ({ requiresPassword, authenticated }).' },
@@ -50,6 +52,11 @@ const endpoints = {
   limits: [
     { method: 'PUT', path: '/api/wireguard/client/:id/max-devices', desc: 'Set the maximum concurrent devices. 0 disables enforcement. When exceeded, the peer is auto-disabled and deviceLimitExceededAt is set.' },
     { method: 'PUT', path: '/api/wireguard/client/:id/bandwidth-limit', desc: 'Set per-peer bandwidth cap in Mbps (0 = unlimited). Applied with Linux Traffic Control (tc HTB egress + ingress police).' },
+    { method: 'PUT', path: '/api/wireguard/client/:id/allowed-source-ips', desc: 'Set per-peer public-IP allow-list (CIDR). Empty = no restriction. Endpoint outside the list auto-disables the peer.' },
+  ],
+  logging: [
+    { method: 'PUT', path: '/api/wireguard/client/:id/logging', desc: 'Enable/disable per-peer connection metadata logging. Body: { loggingEnabled: bool }.' },
+    { method: 'GET', path: '/api/wireguard/client/:id/log/stream', desc: 'Server-Sent Events stream of log events (replay buffer + live).' },
   ],
 };
 
@@ -151,6 +158,74 @@ curl -b cookies.txt http://localhost:51821/api/wireguard/client</pre>
             </CardContent>
           </Card>
 
+          <Card id="api-access-detail">
+            <CardHeader>
+              <CardTitle>API access control</CardTitle>
+              <CardDescription>Panel-wide IPv4 allow-list with Cloudflare-aware origin detection.</CardDescription>
+            </CardHeader>
+            <CardContent class="space-y-3 text-sm text-muted-foreground">
+              <p>
+                When <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">apiAllowedIpsEnabled</code> is true and
+                <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">apiAllowedIps</code> is non-empty, an
+                early Express middleware checks every inbound request before the static handler and any API route. Requests
+                from IPs outside the list get a 403 (JSON for API paths, plain text for static paths). The login page itself
+                is gated, so disallowed IPs cannot even reach the password prompt.
+              </p>
+              <p>
+                Origin IP resolution is controlled by <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">trustProxyHeader</code>:
+              </p>
+              <ul class="list-disc pl-5 space-y-1.5">
+                <li><strong>auto</strong> (default): if the TCP source falls inside Cloudflare's published IPv4 ranges
+                  (<a class="underline" target="_blank" rel="noopener" href="https://www.cloudflare.com/ips-v4/">cloudflare.com/ips-v4</a>),
+                  use <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">CF-Connecting-IP</code>; otherwise use the direct socket address. Safe behind Cloudflare and works with bare connections.</li>
+                <li><strong>cf-connecting-ip</strong>: always trust the header. Use only if your network blocks non-Cloudflare reachability — otherwise headers can be spoofed.</li>
+                <li><strong>x-forwarded-for</strong>: trust the first hop in <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">X-Forwarded-For</code>. For generic reverse proxies.</li>
+                <li><strong>none</strong>: always use the direct TCP source. Ignores all forwarding headers.</li>
+              </ul>
+              <p class="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-300">
+                <strong>Lock-out recovery:</strong> if you accidentally exclude your own IP, edit
+                <code class="rounded bg-background/40 px-1 py-0.5 text-[11px]">wg0.json</code> on the host
+                (set <code class="rounded bg-background/40 px-1 py-0.5 text-[11px]">settings.apiAllowedIpsEnabled</code> to false) and restart the panel.
+              </p>
+              <p>The <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">GET /api/me/ip</code> endpoint reports
+                how the panel sees the caller (direct address, resolved IP, whether the request arrives from Cloudflare,
+                and the raw forwarding headers) — useful for verifying setup before enabling the gate.</p>
+              <pre class="rounded-lg bg-zinc-900 p-4 text-xs leading-relaxed text-zinc-100 overflow-x-auto">curl -b cookies.txt -X PUT http://localhost:51821/api/settings \
+  -H "Content-Type: application/json" \
+  -d '{"apiAllowedIpsEnabled": true, "trustProxyHeader": "auto",
+       "apiAllowedIps": ["203.0.113.5/32", "192.168.1.0/24"]}'</pre>
+            </CardContent>
+          </Card>
+
+          <Card id="logging-detail">
+            <CardHeader>
+              <CardTitle>Connection logging</CardTitle>
+              <CardDescription>Per-peer real-time log of destination IPs, ports, and hostnames.</CardDescription>
+            </CardHeader>
+            <CardContent class="space-y-3 text-sm text-muted-foreground">
+              <p class="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-300">
+                <strong>Privacy notice:</strong> when enabled per peer, the server captures connection metadata —
+                destination IP/port plus hostname extracted from DNS queries, TLS SNI, and HTTP Host headers.
+                <strong>No URL paths, no payloads, no HTTPS bodies are captured.</strong> Use only on systems you own
+                and inform users.
+              </p>
+              <p>Two backends run when at least one peer has <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">loggingEnabled = true</code>:</p>
+              <ul class="list-disc pl-5 space-y-1.5">
+                <li><code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">conntrack -E -e NEW</code> — emits a <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">connection</code> event for each new TCP/UDP flow with src/dst IP and ports.</li>
+                <li><code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">tshark</code> on <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">wg0</code> — emits <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">dns</code>, <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">tls</code>, or <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">http</code> events with extracted hostnames.</li>
+              </ul>
+              <p>Events are matched to a peer by source IP, deduped within a 30s window per (peer, host), and held in an in-memory ring buffer (~500 per peer). The SSE endpoint replays the buffer on connect, then streams new events live with a 20s keep-alive ping.</p>
+              <pre class="rounded-lg bg-zinc-900 p-4 text-xs leading-relaxed text-zinc-100 overflow-x-auto"># Enable logging
+curl -b cookies.txt -X PUT http://localhost:51821/api/wireguard/client/CLIENT_ID/logging \
+  -H "Content-Type: application/json" \
+  -d '{"loggingEnabled": true}'
+
+# Stream events
+curl -N -b cookies.txt http://localhost:51821/api/wireguard/client/CLIENT_ID/log/stream</pre>
+              <p class="text-xs">Requires <code class="rounded bg-muted px-1 py-0.5 text-[11px] text-foreground">conntrack-tools</code> and <code class="rounded bg-muted px-1 py-0.5 text-[11px] text-foreground">tshark</code> on the host (both are in the bundled Dockerfile).</p>
+            </CardContent>
+          </Card>
+
           <Card id="bandwidth-limit-detail">
             <CardHeader>
               <CardTitle>Bandwidth limit (per-peer Mbps)</CardTitle>
@@ -173,6 +248,31 @@ curl -b cookies.txt http://localhost:51821/api/wireguard/client</pre>
               <pre class="rounded-lg bg-zinc-900 p-4 text-xs leading-relaxed text-zinc-100 overflow-x-auto">curl -b cookies.txt -X PUT http://localhost:51821/api/wireguard/client/CLIENT_ID/bandwidth-limit \
   -H "Content-Type: application/json" \
   -d '{"bandwidthLimit": 25}'</pre>
+            </CardContent>
+          </Card>
+
+          <Card id="source-ip-detail">
+            <CardHeader>
+              <CardTitle>Source IP allow-list</CardTitle>
+              <CardDescription>Restrict which public IPs may use a config.</CardDescription>
+            </CardHeader>
+            <CardContent class="space-y-3 text-sm text-muted-foreground">
+              <p>
+                WireGuard does not have a native "reject by source IP" hook — the protocol authenticates by key only. The
+                panel approximates this restriction by polling <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">wg show wg0 dump</code>
+                every 10 seconds, reading each peer's current <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">endpoint</code>,
+                and matching the IP against the per-peer <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">allowedSourceIps</code> CIDR list.
+              </p>
+              <ul class="list-disc pl-5 space-y-1.5">
+                <li>Empty list = no restriction (default).</li>
+                <li>Endpoint outside any listed CIDR auto-disables the peer and timestamps <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">sourceIpDeniedAt</code>.</li>
+                <li>Detection lag 10–60 s; not a real-time block. Connection completes once before the panel kicks the peer.</li>
+                <li>Mobile peers roaming Wi-Fi/4G will trip this — list both networks if needed, or leave restriction off.</li>
+                <li>IPv6 endpoints fail open (allowed) since the matcher is IPv4-only.</li>
+              </ul>
+              <pre class="rounded-lg bg-zinc-900 p-4 text-xs leading-relaxed text-zinc-100 overflow-x-auto">curl -b cookies.txt -X PUT http://localhost:51821/api/wireguard/client/CLIENT_ID/allowed-source-ips \
+  -H "Content-Type: application/json" \
+  -d '{"allowedSourceIps": ["203.0.113.5/32", "192.168.1.0/24"]}'</pre>
             </CardContent>
           </Card>
 
@@ -255,6 +355,9 @@ curl -b cookies.txt http://localhost:51821/api/wireguard/client</pre>
                       <tr><td class="px-3 py-2 font-mono text-xs">activeDeviceCount</td><td class="px-3 py-2 text-muted-foreground">int</td><td class="px-3 py-2 text-muted-foreground">Distinct endpoints currently tracked.</td></tr>
                       <tr><td class="px-3 py-2 font-mono text-xs">deviceLimitExceededAt</td><td class="px-3 py-2 text-muted-foreground">datetime|null</td><td class="px-3 py-2 text-muted-foreground">When the peer was last auto-disabled by the limit.</td></tr>
                       <tr><td class="px-3 py-2 font-mono text-xs">bandwidthLimit</td><td class="px-3 py-2 text-muted-foreground">int (0–10000)</td><td class="px-3 py-2 text-muted-foreground">Per-peer bandwidth cap in Mbps; 0 = unlimited.</td></tr>
+                      <tr><td class="px-3 py-2 font-mono text-xs">loggingEnabled</td><td class="px-3 py-2 text-muted-foreground">boolean</td><td class="px-3 py-2 text-muted-foreground">When true, log connection metadata for this peer.</td></tr>
+                      <tr><td class="px-3 py-2 font-mono text-xs">allowedSourceIps</td><td class="px-3 py-2 text-muted-foreground">string[]</td><td class="px-3 py-2 text-muted-foreground">IPv4 / CIDR allow-list. Empty = no restriction.</td></tr>
+                      <tr><td class="px-3 py-2 font-mono text-xs">sourceIpDeniedAt</td><td class="px-3 py-2 text-muted-foreground">datetime|null</td><td class="px-3 py-2 text-muted-foreground">Last time the peer was auto-disabled by the IP allow-list.</td></tr>
                       <tr><td class="px-3 py-2 font-mono text-xs">latestHandshakeAt</td><td class="px-3 py-2 text-muted-foreground">datetime|null</td><td class="px-3 py-2 text-muted-foreground">Last handshake timestamp.</td></tr>
                       <tr><td class="px-3 py-2 font-mono text-xs">transferRx, transferTx</td><td class="px-3 py-2 text-muted-foreground">int|null</td><td class="px-3 py-2 text-muted-foreground">Cumulative bytes.</td></tr>
                     </tbody>

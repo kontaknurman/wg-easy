@@ -8,6 +8,9 @@ const DEFAULTS = {
   loginSubtitle: 'Sign in to continue',
   showApiDocs: true,
   footerText: '',
+  apiAllowedIpsEnabled: false,
+  apiAllowedIps: [],
+  trustProxyHeader: 'auto',
 };
 
 export const settings = reactive({ ...DEFAULTS });

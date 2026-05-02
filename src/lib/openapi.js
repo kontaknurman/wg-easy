@@ -72,6 +72,15 @@ const clientSchema = {
     bandwidthLimit: {
       type: 'integer', minimum: 0, maximum: 10000, description: 'Per-peer bandwidth cap in Mbps applied symmetrically (download via egress HTB on wg0, upload via ingress police). 0 disables the cap.',
     },
+    loggingEnabled: { type: 'boolean', description: 'When true, the server captures connection events (conntrack) and hostname events (DNS / TLS SNI / HTTP Host via tshark) for this peer and exposes them on the SSE stream.' },
+    logBufferSize: { type: 'integer', description: 'Number of recent log events held in the in-memory ring buffer (max ~500).' },
+    allowedSourceIps: {
+      type: 'array',
+      items: { type: 'string', example: '203.0.113.5/32' },
+      maxItems: 50,
+      description: 'IPv4 CIDR allow-list of public source addresses. Empty array (default) means no restriction. When non-empty, the monitor disables the peer if its current `endpoint` IP from `wg show wg0 dump` does not match any CIDR.',
+    },
+    sourceIpDeniedAt: { type: ['string', 'null'], format: 'date-time', description: 'Set when the peer was auto-disabled because its endpoint did not match `allowedSourceIps`. Cleared on manual re-enable or allow-list update.' },
   },
   required: ['id', 'name', 'enabled', 'address', 'publicKey', 'createdAt', 'updatedAt'],
 };
@@ -112,7 +121,7 @@ function buildSpec(settings = {}) {
         },
         Settings: {
           type: 'object',
-          description: 'Public site branding shown in the panel UI.',
+          description: 'Public site branding and panel-wide options.',
           properties: {
             siteName: { type: 'string', maxLength: 60, description: 'Brand name shown in the header, login page, browser tab title, and docs.' },
             tagline: { type: 'string', maxLength: 200, description: 'Short tagline shown under the dashboard heading.' },
@@ -120,6 +129,18 @@ function buildSpec(settings = {}) {
             loginSubtitle: { type: 'string', maxLength: 200, description: 'Subtitle shown under the login title.' },
             showApiDocs: { type: 'boolean', description: 'When false, hides the API docs link from the header (the page itself remains reachable).' },
             footerText: { type: 'string', maxLength: 500, description: 'Optional footer text shown below the dashboard.' },
+            apiAllowedIpsEnabled: { type: 'boolean', description: 'When true, only requests from `apiAllowedIps` are allowed to reach the API or the static dashboard. Returns 403 to all other IPs.' },
+            apiAllowedIps: {
+              type: 'array',
+              items: { type: 'string', example: '203.0.113.5/32' },
+              maxItems: 50,
+              description: 'IPv4 / CIDR allow-list applied to inbound requests. Empty list disables the gate even if `apiAllowedIpsEnabled` is true.',
+            },
+            trustProxyHeader: {
+              type: 'string',
+              enum: ['auto', 'cf-connecting-ip', 'x-forwarded-for', 'none'],
+              description: '`auto` (default) trusts `CF-Connecting-IP` only when the TCP source is in a Cloudflare range; `cf-connecting-ip` always trusts that header (use behind a reverse proxy that strips spoofs); `x-forwarded-for` trusts the first hop in `X-Forwarded-For`; `none` always uses the direct socket address.',
+            },
           },
         },
       },
@@ -144,6 +165,20 @@ function buildSpec(settings = {}) {
           responses: {
             200: {
               description: 'OpenAPI document.',
+              content: { 'application/json': { schema: { type: 'object' } } },
+            },
+          },
+        },
+      },
+      '/api/me/ip': {
+        get: {
+          tags: ['Meta'],
+          summary: 'Resolve the caller IP as the panel sees it',
+          description: 'Useful for setting up the API allow-list without locking yourself out. Reports the direct TCP source, the resolved IP after applying `trustProxyHeader`, whether the connection arrives from Cloudflare, and the raw `CF-Connecting-IP` / `X-Forwarded-For` headers.',
+          security: [],
+          responses: {
+            200: {
+              description: 'Client IP resolution.',
               content: { 'application/json': { schema: { type: 'object' } } },
             },
           },
@@ -233,14 +268,32 @@ function buildSpec(settings = {}) {
         post: {
           tags: ['Client'],
           summary: 'Create a new client',
-          description: 'Generates a new WireGuard keypair and PSK, allocates the next free IPv4 in the tunnel subnet, defaults `enabled=true`, and creates an empty disabled schedule.',
+          description: 'Generates a new WireGuard keypair and PSK and allocates the next free IPv4 in the tunnel subnet (or accepts a specific `address` when supplied). All per-config settings (enable flag, schedule, max-devices, bandwidth limit, logging, allowed source IPs) can be set at creation time — anything you omit gets the default. The full server record including `privateKey` and `preSharedKey` is returned.',
           requestBody: {
             required: true,
             content: {
               'application/json': {
                 schema: {
                   type: 'object',
-                  properties: { name: { type: 'string' } },
+                  properties: {
+                    name: { type: 'string' },
+                    enabled: { type: 'boolean', default: true, description: 'Manual master enable flag.' },
+                    address: { type: 'string', example: '10.8.0.42', description: 'Optional tunnel IPv4. Must be in the configured subnet (octet 2–254). Auto-allocated if omitted.' },
+                    schedule: { $ref: '#/components/schemas/Schedule' },
+                    maxDevices: {
+                      type: 'integer', minimum: 0, maximum: 99, default: 0,
+                    },
+                    bandwidthLimit: {
+                      type: 'integer', minimum: 0, maximum: 10000, default: 0, description: 'Mbps; 0 disables.',
+                    },
+                    loggingEnabled: { type: 'boolean', default: false },
+                    allowedSourceIps: {
+                      type: 'array',
+                      items: { type: 'string', example: '203.0.113.5/32' },
+                      maxItems: 50,
+                      description: 'IPv4 / CIDR allow-list. Empty array disables the check.',
+                    },
+                  },
                   required: ['name'],
                 },
               },
@@ -452,6 +505,90 @@ function buildSpec(settings = {}) {
           },
         },
       },
+      '/api/wireguard/client/{clientId}/allowed-source-ips': {
+        parameters: [
+          {
+            name: 'clientId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' },
+          },
+        ],
+        put: {
+          tags: ['Limits'],
+          summary: 'Set the public source-IP allow-list (CIDR) for this peer',
+          description: 'WireGuard authenticates by key, not by source IP — there is no protocol-level "reject by IP". This list is enforced post-handshake: the device monitor polls `wg show wg0 dump`, reads each peer current `endpoint`, and if the IP does not match any CIDR in the list, the peer is auto-disabled and `sourceIpDeniedAt` is timestamped. Empty array disables the check. Detection lag is 10–60s. Mobile clients roaming Wi-Fi/4G will frequently trip the check unless their carriers ranges are added.',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    allowedSourceIps: {
+                      type: 'array',
+                      items: { type: 'string', example: '203.0.113.5/32' },
+                      maxItems: 50,
+                    },
+                  },
+                  required: ['allowedSourceIps'],
+                },
+              },
+            },
+          },
+          responses: {
+            204: { description: 'Allow-list saved.' },
+            401: { description: 'Not logged in.' },
+            404: { description: 'Client not found.' },
+          },
+        },
+      },
+      '/api/wireguard/client/{clientId}/logging': {
+        parameters: [
+          {
+            name: 'clientId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' },
+          },
+        ],
+        put: {
+          tags: ['Logging'],
+          summary: 'Enable or disable per-peer connection logging',
+          description: 'Captures **connection metadata only** — destination IP, port, and (when available) hostname extracted from DNS queries, TLS SNI, and HTTP Host headers. Backed by `conntrack -E` (every new TCP/UDP connection) and `tshark` (hostname events) running globally; events are filtered to enabled peers and held in an in-memory ring buffer (~500 per peer). **No payload, no URLs paths, no HTTPS bodies are captured.** Reading other peoples traffic metadata is sensitive — use only on systems you own.',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: { loggingEnabled: { type: 'boolean' } },
+                  required: ['loggingEnabled'],
+                },
+              },
+            },
+          },
+          responses: {
+            204: { description: 'Setting saved.' },
+            401: { description: 'Not logged in.' },
+            404: { description: 'Client not found.' },
+          },
+        },
+      },
+      '/api/wireguard/client/{clientId}/log/stream': {
+        parameters: [
+          {
+            name: 'clientId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' },
+          },
+        ],
+        get: {
+          tags: ['Logging'],
+          summary: 'Server-Sent Events stream of connection log events',
+          description: 'Returns `text/event-stream`. The current ring buffer is replayed first, then new events are streamed as they happen. Each `data:` frame is a JSON object with `ts`, `type` (`connection` | `dns` | `tls` | `http`), `srcIp`, `dstIp`, `dstPort`, `protocol`, and an optional `hostname`. A keep-alive comment line is sent every 20s.',
+          responses: {
+            200: {
+              description: 'Event stream.',
+              content: { 'text/event-stream': { schema: { type: 'string' } } },
+            },
+            401: { description: 'Not logged in.' },
+            404: { description: 'Client not found.' },
+          },
+        },
+      },
       '/api/wireguard/client/{clientId}/qrcode.svg': {
         parameters: [
           {
@@ -498,6 +635,7 @@ function buildSpec(settings = {}) {
       { name: 'Client', description: 'WireGuard peer management.' },
       { name: 'Schedule', description: 'Per-day active hours per client.' },
       { name: 'Limits', description: 'Per-config limits such as max concurrent devices.' },
+      { name: 'Logging', description: 'Per-peer connection metadata logging (DNS / TLS SNI / HTTP Host).' },
       { name: 'Settings', description: 'Site branding and panel-wide settings.' },
     ],
   };

@@ -10,6 +10,32 @@ const Util = require('./Util');
 const ServerError = require('./ServerError');
 const WireGuard = require('../services/WireGuard');
 const buildOpenApi = require('./openapi');
+const { ipMatchesCidrList } = require('./cidr');
+const CLOUDFLARE_RANGES = require('./cloudflareIps');
+
+function stripIpv4Prefix(ip) {
+  if (typeof ip !== 'string') return '';
+  return ip.replace(/^::ffff:/, '');
+}
+
+function extractClientIp(req, mode) {
+  const direct = stripIpv4Prefix((req.socket && req.socket.remoteAddress) || '');
+  const cfHeader = req.headers && req.headers['cf-connecting-ip'];
+  const xff = req.headers && req.headers['x-forwarded-for'];
+
+  if (mode === 'cf-connecting-ip' && cfHeader) {
+    return stripIpv4Prefix(String(cfHeader).trim());
+  }
+  if (mode === 'x-forwarded-for' && xff) {
+    return stripIpv4Prefix(String(xff).split(',')[0].trim());
+  }
+  if (mode === 'auto') {
+    if (cfHeader && ipMatchesCidrList(direct, CLOUDFLARE_RANGES)) {
+      return stripIpv4Prefix(String(cfHeader).trim());
+    }
+  }
+  return direct;
+}
 
 const {
   PORT,
@@ -23,6 +49,30 @@ module.exports = class Server {
     // Express
     this.app = express()
       .disable('etag')
+
+      // API allow-list gate — runs before everything else so even static
+      // assets and the login page are blocked from disallowed IPs.
+      .use(async (req, res, next) => {
+        let settings;
+        try {
+          settings = await WireGuard.getSettings();
+        } catch {
+          return next();
+        }
+        if (!settings.apiAllowedIpsEnabled || !settings.apiAllowedIps || settings.apiAllowedIps.length === 0) {
+          return next();
+        }
+        const ip = extractClientIp(req, settings.trustProxyHeader || 'auto');
+        if (!ipMatchesCidrList(ip, settings.apiAllowedIps)) {
+          debug(`Blocked request from ${ip || 'unknown'} (not in apiAllowedIps).`);
+          if (req.path && req.path.startsWith('/api/')) {
+            return res.status(403).json({ error: `Forbidden (source IP ${ip || 'unknown'} not allowed).` });
+          }
+          return res.status(403).type('text/plain').send(`Forbidden (source IP ${ip || 'unknown'} not allowed).\n`);
+        }
+        return next();
+      })
+
       .use('/', express.static(path.join(__dirname, '..', 'www')))
       .use(express.json())
       .use(expressSession({
@@ -40,6 +90,19 @@ module.exports = class Server {
       }))
       .get('/api/settings', Util.promisify(async () => {
         return WireGuard.getSettings();
+      }))
+      .get('/api/me/ip', Util.promisify(async req => {
+        const settings = await WireGuard.getSettings();
+        const ip = extractClientIp(req, settings.trustProxyHeader || 'auto');
+        const direct = stripIpv4Prefix((req.socket && req.socket.remoteAddress) || '');
+        return {
+          ip,
+          direct,
+          trustProxyHeader: settings.trustProxyHeader || 'auto',
+          fromCloudflare: ipMatchesCidrList(direct, CLOUDFLARE_RANGES),
+          cfConnectingIp: req.headers['cf-connecting-ip'] || null,
+          xForwardedFor: req.headers['x-forwarded-for'] || null,
+        };
       }))
 
       // Authentication
@@ -117,8 +180,20 @@ module.exports = class Server {
         res.send(config);
       }))
       .post('/api/wireguard/client', Util.promisify(async req => {
-        const { name } = req.body;
-        return WireGuard.createClient({ name });
+        const {
+          name, enabled, address, schedule,
+          maxDevices, bandwidthLimit, loggingEnabled, allowedSourceIps,
+        } = req.body || {};
+        return WireGuard.createClient({
+          name,
+          enabled,
+          address,
+          schedule,
+          maxDevices,
+          bandwidthLimit,
+          loggingEnabled,
+          allowedSourceIps,
+        });
       }))
       .delete('/api/wireguard/client/:clientId', Util.promisify(async req => {
         const { clientId } = req.params;
@@ -157,6 +232,56 @@ module.exports = class Server {
         const { bandwidthLimit } = req.body;
         return WireGuard.updateClientBandwidthLimit({ clientId, bandwidthLimit });
       }))
+      .put('/api/wireguard/client/:clientId/logging', Util.promisify(async req => {
+        const { clientId } = req.params;
+        const { loggingEnabled } = req.body;
+        return WireGuard.updateClientLogging({ clientId, loggingEnabled });
+      }))
+      .put('/api/wireguard/client/:clientId/allowed-source-ips', Util.promisify(async req => {
+        const { clientId } = req.params;
+        const { allowedSourceIps } = req.body;
+        return WireGuard.updateClientAllowedSourceIps({ clientId, allowedSourceIps });
+      }))
+      .get('/api/wireguard/client/:clientId/log/stream', (req, res) => {
+        const { clientId } = req.params;
+        Promise.resolve(WireGuard.getClient({ clientId })).then(() => {
+          res.set({
+            'Content-Type': 'text/event-stream; charset=utf-8',
+            'Cache-Control': 'no-cache, no-transform',
+            Connection: 'keep-alive',
+            'X-Accel-Buffering': 'no',
+          });
+          res.flushHeaders();
+
+          const buffered = WireGuard.getClientLogBuffer(clientId);
+          for (const event of buffered) {
+            res.write(`data: ${JSON.stringify(event)}\n\n`);
+          }
+
+          const unsubscribe = WireGuard.subscribeClientLog(clientId, event => {
+            try {
+              res.write(`data: ${JSON.stringify(event)}\n\n`);
+            } catch { /* ignore */ }
+          });
+
+          const keepalive = setInterval(() => {
+            try {
+              res.write(': ping\n\n');
+            } catch { /* ignore */ }
+          }, 20000);
+
+          const cleanup = () => {
+            clearInterval(keepalive);
+            unsubscribe();
+          };
+          req.on('close', cleanup);
+          req.on('error', cleanup);
+        }).catch(err => {
+          res.status(err && err.statusCode === 404 ? 404 : 500).json({
+            error: err && err.message ? err.message : 'Stream failed',
+          });
+        });
+      })
       .put('/api/settings', Util.promisify(async req => {
         return WireGuard.updateSettings(req.body || {});
       }))

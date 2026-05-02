@@ -14,6 +14,8 @@ import DeleteClientDialog from '@/components/DeleteClientDialog.vue';
 import ScheduleDialog from '@/components/ScheduleDialog.vue';
 import DeviceLimitDialog from '@/components/DeviceLimitDialog.vue';
 import BandwidthLimitDialog from '@/components/BandwidthLimitDialog.vue';
+import LogDialog from '@/components/LogDialog.vue';
+import SourceIpDialog from '@/components/SourceIpDialog.vue';
 import QrDialog from '@/components/QrDialog.vue';
 import { HugeiconsIcon } from '@hugeicons/vue';
 import { UserAdd01Icon, UserMultiple02Icon } from '@hugeicons/core-free-icons';
@@ -31,6 +33,8 @@ const deleteClient = ref(null);
 const scheduleClient = ref(null);
 const deviceLimitClient = ref(null);
 const bandwidthLimitClient = ref(null);
+const logClient = ref(null);
+const sourceIpClient = ref(null);
 const qrClient = ref(null);
 
 let pollTimer = null;
@@ -59,11 +63,11 @@ async function refresh() {
   }
 }
 
-async function createClient(name) {
+async function createClient(payload) {
   try {
-    await api.createClient({ name });
+    await api.createClient(payload);
     createOpen.value = false;
-    toast({ title: 'Client created', description: `"${name}" is ready to connect.` });
+    toast({ title: 'Client created', description: `"${payload.name}" is ready to connect.` });
     await refresh();
   } catch (err) { toastError(err); }
 }
@@ -110,6 +114,19 @@ async function saveBandwidthLimit(bandwidthLimit) {
       description: bandwidthLimit > 0 ? `Capped at ${bandwidthLimit} Mbps.` : undefined,
     });
     bandwidthLimitClient.value = null;
+    await refresh();
+  } catch (err) { toastError(err); }
+}
+
+async function saveSourceIp(allowedSourceIps) {
+  if (!sourceIpClient.value) return;
+  try {
+    await api.updateClientAllowedSourceIps({ clientId: sourceIpClient.value.id, allowedSourceIps });
+    toast({
+      title: allowedSourceIps.length > 0 ? 'Source IP restriction saved' : 'Source IP restriction removed',
+      description: allowedSourceIps.length > 0 ? `Allow-list has ${allowedSourceIps.length} entr${allowedSourceIps.length === 1 ? 'y' : 'ies'}.` : undefined,
+    });
+    sourceIpClient.value = null;
     await refresh();
   } catch (err) { toastError(err); }
 }
@@ -170,6 +187,8 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer); });
             @changed="refresh" @schedule="scheduleClient = $event"
             @device-limit="deviceLimitClient = $event"
             @bandwidth-limit="bandwidthLimitClient = $event"
+            @log="logClient = $event"
+            @source-ip="sourceIpClient = $event"
             @delete="deleteClient = $event" @qr="qrClient = $event"
             @error="toastError" />
         </div>
@@ -193,6 +212,12 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer); });
     <BandwidthLimitDialog
       :open="!!bandwidthLimitClient" :client="bandwidthLimitClient"
       @update:open="(v) => { if (!v) bandwidthLimitClient = null }" @save="saveBandwidthLimit" />
+    <LogDialog
+      :open="!!logClient" :client="logClient"
+      @update:open="(v) => { if (!v) logClient = null }" @changed="refresh" />
+    <SourceIpDialog
+      :open="!!sourceIpClient" :client="sourceIpClient"
+      @update:open="(v) => { if (!v) sourceIpClient = null }" @save="saveSourceIp" />
     <QrDialog
       :open="!!qrClient" :client="qrClient"
       @update:open="(v) => { if (!v) qrClient = null }" />
