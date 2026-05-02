@@ -156,7 +156,7 @@ async function loadHistory() {
   try {
     const { from, to } = rangeToBounds(historyRange.value);
     const r = await api.getClientLogHistory({
-      clientId: props.client.id, from, to, limit: 5000,
+      clientId: props.client.id, from, to, limit: 5000, tz: timezone.value || undefined,
     });
     historyEvents.value = (r.events || []);
   } catch (err) {

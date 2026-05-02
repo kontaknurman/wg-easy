@@ -247,9 +247,12 @@ module.exports = class Server {
       .get('/api/wireguard/client/:clientId/log/history', Util.promisify(async req => {
         const { clientId } = req.params;
         await WireGuard.getClient({ clientId });
-        const { from, to, limit } = req.query;
-        const events = await WireGuard.getClientLogHistory(clientId, { from, to, limit });
-        return { events };
+        const {
+          from, to, limit, tz,
+        } = req.query;
+        return WireGuard.getClientLogHistory(clientId, {
+          from, to, limit, tz,
+        });
       }))
       .put('/api/wireguard/client/:clientId/allowed-source-ips', Util.promisify(async req => {
         const { clientId } = req.params;
@@ -264,7 +267,8 @@ module.exports = class Server {
       .get('/api/wireguard/client/:clientId/connections', Util.promisify(async req => {
         const { clientId } = req.params;
         await WireGuard.getClient({ clientId });
-        return { events: WireGuard.getConnectionEvents(clientId) };
+        const { tz } = req.query;
+        return WireGuard.getConnectionEventsWithTz(clientId, tz);
       }))
       .get('/api/wireguard/capture-status', Util.promisify(async () => {
         return WireGuard.getCaptureStatus();

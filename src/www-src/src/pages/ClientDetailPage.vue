@@ -82,7 +82,8 @@ async function refreshEvents() {
   if (!clientId.value) return;
   eventsLoading.value = true;
   try {
-    const r = await api.getClientConnections({ clientId: clientId.value });
+    const tz = client.value?.schedule?.timezone || undefined;
+    const r = await api.getClientConnections({ clientId: clientId.value, tz });
     events.value = r.events.slice().reverse();
   } catch { /* ignore */ } finally {
     eventsLoading.value = false;

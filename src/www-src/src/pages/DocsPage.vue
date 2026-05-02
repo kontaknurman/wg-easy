@@ -28,6 +28,8 @@ const endpoints = {
   meta: [
     { method: 'GET', path: '/api/release', desc: 'Numeric release identifier (matches package.json).' },
     { method: 'GET', path: '/api/openapi.json', desc: 'Full OpenAPI 3.0 specification for this API.' },
+    { method: 'GET', path: '/api/settings', desc: 'Public site branding (siteName, tagline, footer, etc.). No auth required.' },
+    { method: 'PUT', path: '/api/settings', desc: 'Update site branding + API access control. Auth required.' },
     { method: 'GET', path: '/api/me/ip', desc: 'Returns the resolved client IP, direct socket address, Cloudflare detection result, and raw forwarding headers.' },
   ],
   session: [
@@ -37,7 +39,7 @@ const endpoints = {
   ],
   clients: [
     { method: 'GET', path: '/api/wireguard/client', desc: 'List all clients with live transfer stats.' },
-    { method: 'POST', path: '/api/wireguard/client', desc: 'Create a client. Body: { name }.' },
+    { method: 'POST', path: '/api/wireguard/client', desc: 'Create a client. Body accepts every per-peer setting at creation time (see "Create body" detail card).' },
     { method: 'DELETE', path: '/api/wireguard/client/:id', desc: 'Delete a client.' },
     { method: 'POST', path: '/api/wireguard/client/:id/enable', desc: 'Set enabled=true.' },
     { method: 'POST', path: '/api/wireguard/client/:id/disable', desc: 'Set enabled=false.' },
@@ -57,8 +59,11 @@ const endpoints = {
   ],
   logging: [
     { method: 'PUT', path: '/api/wireguard/client/:id/logging', desc: 'Enable/disable per-peer connection metadata logging. Body: { loggingEnabled: bool }.' },
+    { method: 'PUT', path: '/api/wireguard/client/:id/log-retention', desc: 'Days to keep log events on disk for this peer (0 = memory only, 1–365). Hourly pruner removes older entries.' },
     { method: 'GET', path: '/api/wireguard/client/:id/log/stream', desc: 'Server-Sent Events stream of log events (replay buffer + live).' },
-    { method: 'GET', path: '/api/wireguard/client/:id/connections', desc: 'In-memory ring buffer (~500 events) of session-level transitions: connect / disconnect / endpoint-replaced.' },
+    { method: 'GET', path: '/api/wireguard/client/:id/log/history', desc: 'Read persisted log events. Query: from, to, limit (≤50000), tz (IANA timezone for localTime field).' },
+    { method: 'GET', path: '/api/wireguard/client/:id/connections', desc: 'Session-level connect / disconnect history. Query: tz to format localTime.' },
+    { method: 'GET', path: '/api/wireguard/capture-status', desc: 'Live status of the conntrack + tshark capture processes (wanted / running flags).' },
   ],
 };
 
@@ -344,8 +349,74 @@ curl -N -b cookies.txt http://localhost:51821/api/wireguard/client/CLIENT_ID/log
                 <li><strong>disconnected</strong>: peer went from fresh-handshake to stale (no handshake for &gt;3 minutes) or vanished from the dump.</li>
                 <li><strong>disconnected</strong> with <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">reason: "replaced"</code> followed by <strong>connected</strong> from a new IP: the kernel handed the peer to a different endpoint (most-recent handshake wins).</li>
               </ul>
-              <p>Each event includes <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">ts</code>, <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">endpoint</code>, and <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">ip</code>. Buffer is wiped on server restart.</p>
-              <pre class="rounded-lg bg-zinc-900 p-4 text-xs leading-relaxed text-zinc-100 overflow-x-auto">curl -b cookies.txt http://localhost:51821/api/wireguard/client/CLIENT_ID/connections</pre>
+              <p>Each event includes <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">ts</code> (UTC ISO 8601), <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">localTime</code> (formatted in the resolved timezone), <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">endpoint</code>, and <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">ip</code>. The response also carries the resolved <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">timezone</code>. Pass <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">?tz=Asia/Jakarta</code> (or any IANA zone) to override; defaults to the peer's <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">schedule.timezone</code>, then UTC. Buffer is wiped on server restart.</p>
+              <pre class="rounded-lg bg-zinc-900 p-4 text-xs leading-relaxed text-zinc-100 overflow-x-auto">curl -b cookies.txt 'http://localhost:51821/api/wireguard/client/CLIENT_ID/connections?tz=Asia/Jakarta'</pre>
+            </CardContent>
+          </Card>
+
+          <Card id="log-retention-detail">
+            <CardHeader>
+              <CardTitle>Connection log retention</CardTitle>
+              <CardDescription>Persist per-peer log events on disk for a configurable window.</CardDescription>
+            </CardHeader>
+            <CardContent class="space-y-3 text-sm text-muted-foreground">
+              <p>
+                By default the connection log is memory-only (~500 events per peer, wiped on restart). Setting
+                <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">logRetentionDays &gt; 0</code> appends every captured
+                event to <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">WG_PATH/logs/&lt;clientId&gt;.ndjson</code>.
+                An hourly pruner discards entries older than the configured window and caps the file at 100 000 events.
+              </p>
+              <ul class="list-disc pl-5 space-y-1.5">
+                <li><code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">PUT /log-retention</code> with <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">{ "logRetentionDays": 30 }</code> turns persistence on (range 0–365). Setting it back to 0 deletes the file immediately.</li>
+                <li><code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">GET /log/history?from=&amp;to=&amp;limit=&amp;tz=</code> reads the file, oldest → newest, capped by <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">limit</code> (default 5000, max 50 000).</li>
+                <li>The response is <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">{ events, timezone }</code>. Each event keeps its UTC <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">ts</code> and adds <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">localTime</code> formatted in the resolved zone.</li>
+                <li>The on-disk format is NDJSON (one JSON object per line). Stable enough to feed external tooling (jq, OpenSearch, etc.).</li>
+              </ul>
+              <pre class="rounded-lg bg-zinc-900 p-4 text-xs leading-relaxed text-zinc-100 overflow-x-auto"># Enable 30-day retention
+curl -b cookies.txt -X PUT \
+  http://localhost:51821/api/wireguard/client/CLIENT_ID/log-retention \
+  -H 'Content-Type: application/json' \
+  -d '{"logRetentionDays": 30}'
+
+# Read the last 24h, formatted in WIB
+curl -b cookies.txt \
+  'http://localhost:51821/api/wireguard/client/CLIENT_ID/log/history?from=2026-01-01T00:00:00Z&tz=Asia/Jakarta'</pre>
+            </CardContent>
+          </Card>
+
+          <Card id="create-body-detail">
+            <CardHeader>
+              <CardTitle>Create body — full payload</CardTitle>
+              <CardDescription>Every per-peer setting can be set at creation time via <code>POST /api/wireguard/client</code>.</CardDescription>
+            </CardHeader>
+            <CardContent class="space-y-3 text-sm text-muted-foreground">
+              <p>Only <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">name</code> is required. Anything you omit gets the default — see the linked detail cards above for each field's semantics. The full server record (including freshly-generated <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">privateKey</code> + <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">preSharedKey</code>) is returned in the 200 body.</p>
+              <pre class="rounded-lg bg-zinc-900 p-4 text-xs leading-relaxed text-zinc-100 overflow-x-auto">curl -b cookies.txt -X POST http://localhost:51821/api/wireguard/client \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "name": "office-laptop",
+    "enabled": true,
+    "address": "10.8.0.42",
+    "schedule": {
+      "enabled": true,
+      "timezone": "Asia/Jakarta",
+      "days": {
+        "monday":    { "active": true,  "start": "08:00", "end": "17:00" },
+        "tuesday":   { "active": true,  "start": "08:00", "end": "17:00" },
+        "wednesday": { "active": true,  "start": "08:00", "end": "17:00" },
+        "thursday":  { "active": true,  "start": "08:00", "end": "17:00" },
+        "friday":    { "active": true,  "start": "08:00", "end": "17:00" },
+        "saturday":  { "active": false, "start": "00:00", "end": "23:59" },
+        "sunday":    { "active": false, "start": "00:00", "end": "23:59" }
+      }
+    },
+    "maxDevices": 1,
+    "bandwidthLimit": 25,
+    "loggingEnabled": true,
+    "logRetentionDays": 30,
+    "allowedSourceIps": ["203.0.113.5/32"],
+    "blockedDomains": ["youtube.com", "*.facebook.com", "*ads*"]
+  }'</pre>
             </CardContent>
           </Card>
 
@@ -403,6 +474,8 @@ curl -N -b cookies.txt http://localhost:51821/api/wireguard/client/CLIENT_ID/log
                       <tr><td class="px-3 py-2 font-mono text-xs">deviceLimitExceededAt</td><td class="px-3 py-2 text-muted-foreground">datetime|null</td><td class="px-3 py-2 text-muted-foreground">When the peer was last auto-disabled by the limit.</td></tr>
                       <tr><td class="px-3 py-2 font-mono text-xs">bandwidthLimit</td><td class="px-3 py-2 text-muted-foreground">int (0–10000)</td><td class="px-3 py-2 text-muted-foreground">Per-peer bandwidth cap in Mbps; 0 = unlimited.</td></tr>
                       <tr><td class="px-3 py-2 font-mono text-xs">loggingEnabled</td><td class="px-3 py-2 text-muted-foreground">boolean</td><td class="px-3 py-2 text-muted-foreground">When true, log connection metadata for this peer.</td></tr>
+                      <tr><td class="px-3 py-2 font-mono text-xs">logRetentionDays</td><td class="px-3 py-2 text-muted-foreground">int (0–365)</td><td class="px-3 py-2 text-muted-foreground">Days to keep log events on disk; 0 = memory only.</td></tr>
+                      <tr><td class="px-3 py-2 font-mono text-xs">logBufferSize</td><td class="px-3 py-2 text-muted-foreground">int</td><td class="px-3 py-2 text-muted-foreground">Number of recent events held in the in-memory ring (max ~500).</td></tr>
                       <tr><td class="px-3 py-2 font-mono text-xs">allowedSourceIps</td><td class="px-3 py-2 text-muted-foreground">string[]</td><td class="px-3 py-2 text-muted-foreground">IPv4 / CIDR allow-list. Empty = no restriction.</td></tr>
                       <tr><td class="px-3 py-2 font-mono text-xs">sourceIpDeniedAt</td><td class="px-3 py-2 text-muted-foreground">datetime|null</td><td class="px-3 py-2 text-muted-foreground">Last time the peer was auto-disabled by the IP allow-list.</td></tr>
                       <tr><td class="px-3 py-2 font-mono text-xs">blockedDomains</td><td class="px-3 py-2 text-muted-foreground">string[]</td><td class="px-3 py-2 text-muted-foreground">Domain patterns blocked at SNI/Host/DNS layer.</td></tr>

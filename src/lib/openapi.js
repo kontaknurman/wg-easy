@@ -627,11 +627,17 @@ function buildSpec(settings = {}) {
           {
             name: 'clientId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' },
           },
+          {
+            name: 'tz',
+            in: 'query',
+            schema: { type: 'string', example: 'Asia/Jakarta' },
+            description: 'IANA timezone used to populate `localTime` on each event. Falls back to the peer schedule timezone, then UTC. `ts` itself always remains UTC ISO 8601.',
+          },
         ],
         get: {
           tags: ['Logging'],
           summary: 'Per-peer connection history (connect / disconnect / endpoint changes)',
-          description: 'Returns the in-memory ring buffer (~500 events per peer) of session-level transitions. Each event has `ts` (ISO date), `type` (`connected` | `disconnected`), `endpoint`, and `ip`. `disconnected` events with `reason: "replaced"` mean the kernel handed the peer over to a new endpoint (most-recent handshake wins). Buffer is wiped on server restart.',
+          description: 'Returns `{ events, timezone }`. The events array is the in-memory ring buffer (~500 entries per peer) of session-level transitions. Each event has `ts` (UTC ISO 8601), `localTime` (formatted in the resolved timezone), `type` (`connected` | `disconnected`), `endpoint`, and `ip`. `disconnected` events with `reason: "replaced"` mean the kernel handed the peer over to a new endpoint (most-recent handshake wins). Buffer is wiped on server restart.',
           responses: {
             200: {
               description: 'Connection events.',
@@ -692,6 +698,17 @@ function buildSpec(settings = {}) {
           },
         },
       },
+      '/api/wireguard/capture-status': {
+        get: {
+          tags: ['Logging'],
+          summary: 'Live status of the global capture processes',
+          description: 'Useful for diagnosing why the connection log is empty. Returns `{ wanted, conntrackRunning, tsharkRunning }` — `wanted` is true when at least one peer has logging enabled, the other two reflect whether each background process is currently alive. The supervisor restarts dead processes within 30 seconds when `wanted` is true.',
+          responses: {
+            200: { description: 'Current capture status.', content: { 'application/json': { schema: { type: 'object' } } } },
+            401: { description: 'Not logged in.' },
+          },
+        },
+      },
       '/api/wireguard/client/{clientId}/log/history': {
         parameters: [
           {
@@ -711,11 +728,17 @@ function buildSpec(settings = {}) {
             },
             description: 'Max events to return. The newest events are kept when the cap is hit.',
           },
+          {
+            name: 'tz',
+            in: 'query',
+            schema: { type: 'string', example: 'Asia/Jakarta' },
+            description: 'IANA timezone applied to populate `localTime` on each event. Falls back to the peer schedule timezone, then UTC. `ts` itself always remains UTC ISO 8601.',
+          },
         ],
         get: {
           tags: ['Logging'],
           summary: 'Read persisted log events for this peer (NDJSON file)',
-          description: 'Returns events from the on-disk log within the requested window, sorted oldest → newest. Returns an empty list when the peer has no persisted file (e.g. retention is disabled or no events have arrived yet).',
+          description: 'Returns `{ events, timezone }`. Events are sorted oldest → newest, capped by `limit`. Each event keeps the original capture fields (`ts`, `type`, `srcIp`, `dstIp`, `dstPort`, `protocol`, optional `hostname`) and adds `localTime` formatted in the resolved timezone. Returns an empty array when the peer has no persisted file (e.g. retention is disabled or no events have arrived yet).',
           responses: {
             200: { description: 'Events.', content: { 'application/json': { schema: { type: 'object' } } } },
             401: { description: 'Not logged in.' },
