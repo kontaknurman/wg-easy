@@ -27,10 +27,15 @@ const props = defineProps({
   disabled: { type: Boolean, default: false },
 });
 const emit = defineEmits(['update:modelValue']);
-const forwarded = useForwardPropsEmits(
-  { modelValue: props.modelValue, defaultValue: props.defaultValue, disabled: props.disabled },
-  emit,
-);
+
+// Reactive omit so `useForwardPropsEmits` tracks the parent's modelValue.
+// `{ key: props.key }` would snapshot at setup time and break two-way binding.
+const delegatedProps = computed(() => ({
+  modelValue: props.modelValue,
+  defaultValue: props.defaultValue,
+  disabled: props.disabled,
+}));
+const forwarded = useForwardPropsEmits(delegatedProps, emit);
 const triggerClasses = computed(() => cn(
   'flex h-9 w-full items-center justify-between whitespace-nowrap rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50 [&>span]:line-clamp-1',
   props.triggerClass,
