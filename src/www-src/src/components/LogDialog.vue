@@ -40,6 +40,20 @@ const streamState = computed(() => (liveStore.value ? liveStore.value.streamStat
 
 const paused = ref(false);
 const filter = ref('');
+// Multi-choice type filter. Empty = show all types.
+const typeFilter = ref(new Set());
+const TYPE_OPTIONS = [
+  { key: 'dns', label: 'DNS' },
+  { key: 'tls', label: 'TLS' },
+  { key: 'http', label: 'HTTP' },
+  { key: 'connection', label: 'CONN' },
+];
+function toggleType(key) {
+  const next = new Set(typeFilter.value);
+  if (next.has(key)) next.delete(key); else next.add(key);
+  typeFilter.value = next;
+}
+function clearTypeFilter() { typeFilter.value = new Set(); }
 const mode = ref('live');
 const historyEvents = ref([]);
 const historyLoading = ref(false);
@@ -180,12 +194,15 @@ const sourceEvents = computed(() => (mode.value === 'history' ? historyEvents.va
 
 const filtered = computed(() => {
   const q = filter.value.trim().toLowerCase();
+  const types = typeFilter.value;
   const base = sourceEvents.value;
-  const matched = q
-    ? base.filter(e => (e.hostname || '').toLowerCase().includes(q)
+  const matched = base.filter((e) => {
+    if (types.size > 0 && !types.has((e.type || '').toLowerCase())) return false;
+    if (!q) return true;
+    return (e.hostname || '').toLowerCase().includes(q)
       || (e.dstIp || '').includes(q)
-      || (e.type || '').includes(q))
-    : base;
+      || (e.type || '').includes(q);
+  });
   // Newest first for display.
   return matched.slice().reverse();
 });
@@ -286,6 +303,28 @@ function reconnect() {
             <button v-if="displayTz" type="button" class="text-xs text-muted-foreground hover:text-foreground" @click="displayTz = ''">
               reset tz
             </button>
+          </div>
+
+          <!-- Type chips (multi-select, empty = all) -->
+          <div class="flex flex-wrap items-center gap-1.5">
+            <span class="text-[11px] text-muted-foreground">Types:</span>
+            <button v-for="opt in TYPE_OPTIONS" :key="opt.key"
+                    type="button"
+                    :class="[
+                      'rounded-md border px-2 py-0.5 text-[11px] font-mono uppercase transition-colors',
+                      typeFilter.has(opt.key)
+                        ? 'border-primary bg-primary/10 text-primary'
+                        : 'border-border text-muted-foreground hover:text-foreground hover:border-foreground/40',
+                    ]"
+                    @click="toggleType(opt.key)">
+              {{ opt.label }}
+            </button>
+            <button v-if="typeFilter.size > 0" type="button"
+                    class="text-[11px] text-muted-foreground hover:text-foreground"
+                    @click="clearTypeFilter">
+              clear
+            </button>
+            <span v-else class="text-[11px] text-muted-foreground">all</span>
           </div>
 
           <!-- History range -->
