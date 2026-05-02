@@ -4,6 +4,7 @@ import {
 } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { api } from '@/api/client';
+import { attachLogStream, detachLogStream } from '@/lib/logStream';
 import { toast, toastError } from '@/lib/toast';
 import {
   formatBytes, formatDateTime, formatRelative, formatInTimezone,
@@ -104,7 +105,10 @@ onMounted(() => {
 onUnmounted(() => {
   if (pollTimer) clearInterval(pollTimer);
   if (eventsTimer) clearInterval(eventsTimer);
-  closeLogStream();
+  if (attachedLiveId) {
+    detachLogStream(attachedLiveId);
+    attachedLiveId = null;
+  }
 });
 
 const isOnline = computed(() => {
@@ -262,55 +266,37 @@ function fmtEventTime(ts) {
 }
 
 // ---------- Inline log stream (compact preview) ----------
-const liveEvents = ref([]);
-const streamState = ref('idle'); // idle | connecting | open | reconnecting | failed
-let evtSource = null;
+// Uses the shared `logStream` store so the EventSource is identical to (and
+// shared with) the one read by the "Open full log" dialog. Without sharing,
+// two separate EventSources to the same path occasionally diverged: the
+// inline kept receiving events while the dialog stopped.
+const liveStore = ref(null);
+const liveEvents = computed(() => (liveStore.value ? liveStore.value.events.value : []));
+const streamState = computed(() => (liveStore.value ? liveStore.value.streamState.value : 'idle'));
 
 const visibleLiveEvents = computed(() => liveEvents.value.slice(-10).reverse());
 
-function closeLogStream() {
-  if (evtSource) {
-    try { evtSource.close(); } catch { /* ignore */ }
-    evtSource = null;
-  }
-  streamState.value = 'idle';
-}
+let attachedLiveId = null;
 
-function openLogStream() {
-  closeLogStream();
-  if (!client.value || !loggingOn.value) return;
-  if (typeof window === 'undefined' || !window.EventSource) return;
-  streamState.value = 'connecting';
-  const url = api.logStreamUrl({ clientId: client.value.id });
-  evtSource = new EventSource(url);
-  evtSource.onopen = () => { streamState.value = 'open'; };
-  evtSource.onmessage = (e) => {
-    streamState.value = 'open';
-    try {
-      const ev = JSON.parse(e.data);
-      liveEvents.value.push(ev);
-      if (liveEvents.value.length > 200) liveEvents.value.splice(0, liveEvents.value.length - 200);
-    } catch { /* ignore */ }
-  };
-  evtSource.onerror = () => {
-    if (evtSource && evtSource.readyState === 2) streamState.value = 'failed';
-    else streamState.value = 'reconnecting';
-  };
+function syncLiveSubscription() {
+  const wantId = (loggingOn.value && client.value) ? client.value.id : null;
+  if (wantId === attachedLiveId) return;
+  if (attachedLiveId) {
+    detachLogStream(attachedLiveId);
+    attachedLiveId = null;
+    liveStore.value = null;
+  }
+  if (wantId) {
+    liveStore.value = attachLogStream(wantId);
+    attachedLiveId = wantId;
+  }
 }
 
 function reconnectLogStream() {
-  liveEvents.value = [];
-  openLogStream();
+  if (liveStore.value) liveStore.value.reconnect();
 }
 
-watch([loggingOn, () => client.value?.id], (v) => {
-  if (loggingOn.value && client.value) {
-    openLogStream();
-  } else {
-    closeLogStream();
-    liveEvents.value = [];
-  }
-});
+watch([loggingOn, () => client.value?.id], syncLiveSubscription, { immediate: true });
 
 const streamLabel = computed(() => {
   switch (streamState.value) {
