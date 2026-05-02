@@ -38,7 +38,7 @@ const allDaysActive = computed({
 });
 
 watch(
-  () => [props.open, props.client?.id],
+  [() => props.open, () => props.client?.id],
   () => {
     if (!props.open || !props.client) return;
     const incoming = props.client.schedule || defaultSchedule();

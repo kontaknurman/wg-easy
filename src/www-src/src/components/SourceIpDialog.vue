@@ -47,7 +47,7 @@ const draftDuplicate = computed(() => list.value.includes(draft.value.trim()));
 const deniedAt = computed(() => props.client?.sourceIpDeniedAt);
 
 watch(
-  () => [props.open, props.client?.id],
+  [() => props.open, () => props.client?.id],
   () => {
     if (!props.open || !props.client) return;
     const incoming = Array.isArray(props.client.allowedSourceIps) ? props.client.allowedSourceIps : [];

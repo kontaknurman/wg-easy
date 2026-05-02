@@ -104,7 +104,12 @@ watch(
 // Stream lifecycle reacts to dialog open + logging toggle without touching
 // the user's view state (mode, events, filter, picked timezone).
 watch(
-  () => [props.open, props.client?.id, props.client?.loggingEnabled, props.client?.logRetentionDays],
+  [
+    () => props.open,
+    () => props.client?.id,
+    () => props.client?.loggingEnabled,
+    () => props.client?.logRetentionDays,
+  ],
   () => {
     if (!props.open || !props.client) {
       closeStream();

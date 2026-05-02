@@ -25,7 +25,7 @@ const enabled = ref(false);
 const limit = ref(10);
 
 watch(
-  () => [props.open, props.client?.id],
+  [() => props.open, () => props.client?.id],
   () => {
     if (!props.open || !props.client) return;
     const cap = props.client.bandwidthLimit || 0;

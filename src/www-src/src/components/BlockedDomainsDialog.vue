@@ -37,7 +37,7 @@ const draftDup = computed(() => {
 });
 
 watch(
-  () => [props.open, props.client?.id],
+  [() => props.open, () => props.client?.id],
   () => {
     if (!props.open || !props.client) return;
     list.value = Array.isArray(props.client.blockedDomains) ? props.client.blockedDomains.slice() : [];
