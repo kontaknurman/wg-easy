@@ -27,7 +27,7 @@ const enabled = ref(false);
 const limit = ref(1);
 
 watch(
-  () => [props.open, props.client?.id],
+  [() => props.open, () => props.client?.id],
   () => {
     if (!props.open || !props.client) return;
     const max = props.client.maxDevices || 0;

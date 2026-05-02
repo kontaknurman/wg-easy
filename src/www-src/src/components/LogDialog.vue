@@ -16,9 +16,10 @@ import Switch from '@/components/ui/Switch.vue';
 import Input from '@/components/ui/Input.vue';
 import Label from '@/components/ui/Label.vue';
 import Badge from '@/components/ui/Badge.vue';
+import Select from '@/components/ui/Select.vue';
 import { api } from '@/api/client';
 import { toast, toastError } from '@/lib/toast';
-import { formatTimeOnly } from '@/lib/utils';
+import { formatTimeOnly, listTimezones } from '@/lib/utils';
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -38,9 +39,14 @@ const historyLoading = ref(false);
 const historyRange = ref('24h'); // '1h' | '24h' | '7d' | '30d' | 'custom'
 const historyFrom = ref('');
 const historyTo = ref('');
+const displayTz = ref('');
 let evtSource = null;
 
-const timezone = computed(() => props.client?.schedule?.timezone || null);
+const peerTimezone = computed(() => props.client?.schedule?.timezone || 'UTC');
+// Effective timezone applied to clock formatting + history API requests.
+// Falls back to the peer's schedule timezone when the user hasn't picked one.
+const timezone = computed(() => displayTz.value || peerTimezone.value);
+const timezoneOptions = computed(() => listTimezones().map(tz => ({ value: tz, label: tz })));
 
 function setOpen(v) { emit('update:open', v); }
 
@@ -79,8 +85,31 @@ function openStream() {
   };
 }
 
+// Reset list state when the peer changes (or the dialog reopens for a new
+// peer). NOT triggered by mere prop refreshes — earlier this watcher used to
+// fire whenever logRetentionDays / loggingEnabled flipped, wiping events and
+// snapping the user back to the live tab while they were reading history.
 watch(
-  () => [props.open, props.client?.id, props.client?.loggingEnabled, props.client?.logRetentionDays],
+  () => props.client?.id,
+  () => {
+    events.value = [];
+    historyEvents.value = [];
+    mode.value = 'live';
+    paused.value = false;
+    filter.value = '';
+    displayTz.value = '';
+  },
+);
+
+// Stream lifecycle reacts to dialog open + logging toggle without touching
+// the user's view state (mode, events, filter, picked timezone).
+watch(
+  [
+    () => props.open,
+    () => props.client?.id,
+    () => props.client?.loggingEnabled,
+    () => props.client?.logRetentionDays,
+  ],
   () => {
     if (!props.open || !props.client) {
       closeStream();
@@ -88,10 +117,8 @@ watch(
     }
     enabled.value = !!props.client.loggingEnabled;
     retentionDraft.value = props.client.logRetentionDays || 0;
-    events.value = [];
-    historyEvents.value = [];
-    mode.value = 'live';
-    if (enabled.value) openStream();
+    if (enabled.value && !evtSource) openStream();
+    if (!enabled.value) closeStream();
   },
   { immediate: true },
 );
@@ -283,12 +310,20 @@ function badgeVariant(type) {
                   @click="mode = 'history'">History</button>
         </div>
 
+        <div v-if="enabled" class="flex flex-wrap items-center gap-2 rounded-md border bg-muted/20 px-2 py-1 text-xs">
+          <span class="text-muted-foreground">Display timezone:</span>
+          <Select v-model="displayTz" :options="timezoneOptions" :placeholder="`(peer: ${peerTimezone})`"
+                  class="min-w-[12rem]" trigger-class="h-7 w-56" />
+          <button v-if="displayTz" type="button" class="text-muted-foreground hover:text-foreground" @click="displayTz = ''">
+            reset
+          </button>
+        </div>
+
         <div v-if="enabled && mode === 'live'" class="grid gap-2">
           <div class="flex items-center justify-between gap-2 rounded-md border bg-muted/20 px-2 py-1 text-xs">
             <div class="flex items-center gap-2">
               <span :class="['inline-block h-2 w-2 rounded-full', streamDotClass]"></span>
               <span class="font-medium">{{ streamLabel }}</span>
-              <span v-if="timezone" class="text-muted-foreground">· timezone: {{ timezone }}</span>
             </div>
             <button v-if="streamState === 'failed' || streamState === 'reconnecting'"
                     type="button"
@@ -332,11 +367,17 @@ function badgeVariant(type) {
 
         <div v-if="enabled" class="rounded-md border bg-muted/30 max-h-[420px] overflow-y-auto font-mono text-xs">
           <div v-if="filtered.length === 0" class="p-6 text-center text-muted-foreground">
-            <p v-if="mode === 'live' && events.length === 0">Waiting for traffic…</p>
+            <p v-if="mode === 'live' && events.length === 0 && (streamState === 'connecting' || streamState === 'reconnecting')">
+              Connecting…
+            </p>
+            <p v-else-if="mode === 'live' && events.length === 0 && streamState === 'failed'">
+              Stream disconnected. Click Reconnect above.
+            </p>
+            <p v-else-if="mode === 'live' && events.length === 0">No events captured yet — generate some traffic.</p>
             <p v-else-if="mode === 'history' && historyEvents.length === 0">No events in this range.</p>
             <p v-else>No events match the filter.</p>
           </div>
-          <div v-for="(e, i) in filtered" :key="i"
+          <div v-for="e in filtered" :key="`${e.ts}-${e.type}-${e.hostname || e.dstIp}-${e.dstPort}`"
                class="flex items-start gap-2 border-b border-border/50 px-3 py-2 last:border-b-0">
             <span class="text-muted-foreground tabular-nums">{{ fmtTime(e.ts) }}</span>
             <Badge :variant="badgeVariant(e.type)" class="shrink-0 uppercase font-mono text-[10px]">{{ e.type }}</Badge>
