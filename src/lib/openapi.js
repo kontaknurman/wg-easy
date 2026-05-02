@@ -74,6 +74,12 @@ const clientSchema = {
     },
     loggingEnabled: { type: 'boolean', description: 'When true, the server captures connection events (conntrack) and hostname events (DNS / TLS SNI / HTTP Host via tshark) for this peer and exposes them on the SSE stream.' },
     logBufferSize: { type: 'integer', description: 'Number of recent log events held in the in-memory ring buffer (max ~500).' },
+    logRetentionDays: {
+      type: 'integer',
+      minimum: 0,
+      maximum: 365,
+      description: 'When greater than zero, every captured log event is appended to a per-peer NDJSON file under WG_PATH/logs/<clientId>.ndjson. An hourly pruner discards entries older than this many days. 0 (default) disables disk persistence — only the in-memory ring buffer is kept.',
+    },
     allowedSourceIps: {
       type: 'array',
       items: { type: 'string', example: '203.0.113.5/32' },
@@ -652,6 +658,66 @@ function buildSpec(settings = {}) {
                 },
               },
             },
+            401: { description: 'Not logged in.' },
+            404: { description: 'Client not found.' },
+          },
+        },
+      },
+      '/api/wireguard/client/{clientId}/log-retention': {
+        parameters: [
+          {
+            name: 'clientId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' },
+          },
+        ],
+        put: {
+          tags: ['Logging'],
+          summary: 'Set how many days of log events the panel persists for this peer',
+          description: 'Setting `logRetentionDays > 0` enables append-on-delivery to `WG_PATH/logs/<clientId>.ndjson`. An hourly pruner trims events older than the configured window (and caps the file at ~100,000 events). Setting it back to 0 deletes the file.',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: { logRetentionDays: { type: 'integer', minimum: 0, maximum: 365 } },
+                  required: ['logRetentionDays'],
+                },
+              },
+            },
+          },
+          responses: {
+            204: { description: 'Saved.' },
+            401: { description: 'Not logged in.' },
+            404: { description: 'Client not found.' },
+          },
+        },
+      },
+      '/api/wireguard/client/{clientId}/log/history': {
+        parameters: [
+          {
+            name: 'clientId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' },
+          },
+          {
+            name: 'from', in: 'query', schema: { type: 'string', format: 'date-time' }, description: 'Lower bound (inclusive) for `ts`.',
+          },
+          {
+            name: 'to', in: 'query', schema: { type: 'string', format: 'date-time' }, description: 'Upper bound (inclusive) for `ts`.',
+          },
+          {
+            name: 'limit',
+            in: 'query',
+            schema: {
+              type: 'integer', minimum: 1, maximum: 50000, default: 5000,
+            },
+            description: 'Max events to return. The newest events are kept when the cap is hit.',
+          },
+        ],
+        get: {
+          tags: ['Logging'],
+          summary: 'Read persisted log events for this peer (NDJSON file)',
+          description: 'Returns events from the on-disk log within the requested window, sorted oldest → newest. Returns an empty list when the peer has no persisted file (e.g. retention is disabled or no events have arrived yet).',
+          responses: {
+            200: { description: 'Events.', content: { 'application/json': { schema: { type: 'object' } } } },
             401: { description: 'Not logged in.' },
             404: { description: 'Client not found.' },
           },

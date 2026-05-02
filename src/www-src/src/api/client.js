@@ -51,6 +51,15 @@ export const api = {
   updateClientMaxDevices: ({ clientId, maxDevices }) => call({ method: 'PUT', path: `/wireguard/client/${clientId}/max-devices`, body: { maxDevices } }),
   updateClientBandwidthLimit: ({ clientId, bandwidthLimit }) => call({ method: 'PUT', path: `/wireguard/client/${clientId}/bandwidth-limit`, body: { bandwidthLimit } }),
   updateClientLogging: ({ clientId, loggingEnabled }) => call({ method: 'PUT', path: `/wireguard/client/${clientId}/logging`, body: { loggingEnabled } }),
+  updateClientLogRetention: ({ clientId, logRetentionDays }) => call({ method: 'PUT', path: `/wireguard/client/${clientId}/log-retention`, body: { logRetentionDays } }),
+  getClientLogHistory: ({ clientId, from, to, limit } = {}) => {
+    const qs = new URLSearchParams();
+    if (from) qs.set('from', from instanceof Date ? from.toISOString() : from);
+    if (to) qs.set('to', to instanceof Date ? to.toISOString() : to);
+    if (limit) qs.set('limit', String(limit));
+    const suffix = qs.toString() ? `?${qs}` : '';
+    return call({ method: 'GET', path: `/wireguard/client/${clientId}/log/history${suffix}` });
+  },
   updateClientAllowedSourceIps: ({ clientId, allowedSourceIps }) => call({ method: 'PUT', path: `/wireguard/client/${clientId}/allowed-source-ips`, body: { allowedSourceIps } }),
   updateClientBlockedDomains: ({ clientId, blockedDomains }) => call({ method: 'PUT', path: `/wireguard/client/${clientId}/blocked-domains`, body: { blockedDomains } }),
 

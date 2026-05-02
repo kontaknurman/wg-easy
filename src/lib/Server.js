@@ -239,6 +239,18 @@ module.exports = class Server {
         const { loggingEnabled } = req.body;
         return WireGuard.updateClientLogging({ clientId, loggingEnabled });
       }))
+      .put('/api/wireguard/client/:clientId/log-retention', Util.promisify(async req => {
+        const { clientId } = req.params;
+        const { logRetentionDays } = req.body;
+        return WireGuard.updateClientLogRetention({ clientId, logRetentionDays });
+      }))
+      .get('/api/wireguard/client/:clientId/log/history', Util.promisify(async req => {
+        const { clientId } = req.params;
+        await WireGuard.getClient({ clientId });
+        const { from, to, limit } = req.query;
+        const events = await WireGuard.getClientLogHistory(clientId, { from, to, limit });
+        return { events };
+      }))
       .put('/api/wireguard/client/:clientId/allowed-source-ips', Util.promisify(async req => {
         const { clientId } = req.params;
         const { allowedSourceIps } = req.body;
