@@ -32,6 +32,7 @@ import {
   Shield01Icon, FlashIcon, EyeIcon, InternetIcon, QrCode01Icon,
   Download04Icon, Delete02Icon, ArrowDown01Icon, ArrowUp01Icon,
   Wifi01Icon, WifiDisconnected01Icon, RefreshIcon, AlertCircleIcon,
+  GlobeIcon,
 } from '@hugeicons/core-free-icons';
 
 const route = useRoute();
@@ -100,6 +101,7 @@ onMounted(() => {
 onUnmounted(() => {
   if (pollTimer) clearInterval(pollTimer);
   if (eventsTimer) clearInterval(eventsTimer);
+  closeLogStream();
 });
 
 const isOnline = computed(() => {
@@ -209,6 +211,85 @@ const timezone = computed(() => client.value?.schedule?.timezone || 'UTC');
 
 function fmtEventTime(ts) {
   return formatInTimezone(ts, timezone.value);
+}
+
+// ---------- Inline log stream (compact preview) ----------
+const liveEvents = ref([]);
+const streamState = ref('idle'); // idle | connecting | open | reconnecting | failed
+let evtSource = null;
+
+const visibleLiveEvents = computed(() => liveEvents.value.slice(-10).reverse());
+
+function closeLogStream() {
+  if (evtSource) {
+    try { evtSource.close(); } catch { /* ignore */ }
+    evtSource = null;
+  }
+  streamState.value = 'idle';
+}
+
+function openLogStream() {
+  closeLogStream();
+  if (!client.value || !loggingOn.value) return;
+  if (typeof window === 'undefined' || !window.EventSource) return;
+  streamState.value = 'connecting';
+  const url = api.logStreamUrl({ clientId: client.value.id });
+  evtSource = new EventSource(url);
+  evtSource.onopen = () => { streamState.value = 'open'; };
+  evtSource.onmessage = (e) => {
+    streamState.value = 'open';
+    try {
+      const ev = JSON.parse(e.data);
+      liveEvents.value.push(ev);
+      if (liveEvents.value.length > 200) liveEvents.value.splice(0, liveEvents.value.length - 200);
+    } catch { /* ignore */ }
+  };
+  evtSource.onerror = () => {
+    if (evtSource && evtSource.readyState === 2) streamState.value = 'failed';
+    else streamState.value = 'reconnecting';
+  };
+}
+
+function reconnectLogStream() {
+  liveEvents.value = [];
+  openLogStream();
+}
+
+watch([loggingOn, () => client.value?.id], (v) => {
+  if (loggingOn.value && client.value) {
+    openLogStream();
+  } else {
+    closeLogStream();
+    liveEvents.value = [];
+  }
+});
+
+const streamLabel = computed(() => {
+  switch (streamState.value) {
+    case 'open': return 'Live';
+    case 'connecting': return 'Connecting…';
+    case 'reconnecting': return 'Reconnecting…';
+    case 'failed': return 'Disconnected';
+    default: return 'Idle';
+  }
+});
+const streamDotClass = computed(() => {
+  switch (streamState.value) {
+    case 'open': return 'bg-emerald-500';
+    case 'connecting':
+    case 'reconnecting': return 'bg-amber-500 animate-pulse';
+    case 'failed': return 'bg-destructive';
+    default: return 'bg-muted-foreground/40';
+  }
+});
+function eventTypeVariant(type) {
+  switch (type) {
+    case 'tls': return 'success';
+    case 'dns': return 'default';
+    case 'http': return 'warning';
+    case 'connection': return 'secondary';
+    default: return 'outline';
+  }
 }
 </script>
 
@@ -395,22 +476,55 @@ function fmtEventTime(ts) {
             </CardContent>
           </Card>
 
-          <!-- Logging -->
+          <!-- Logging (inline live stream) -->
           <Card class="lg:col-span-2">
             <CardHeader class="flex-row items-center justify-between space-y-0 pb-3">
-              <div class="flex items-center gap-2">
+              <div class="flex items-center gap-2 flex-wrap">
                 <HugeiconsIcon :icon="EyeIcon" :size="18" :stroke-width="2" class="text-muted-foreground" />
                 <CardTitle class="text-base">Connection log (URL / DNS / TLS metadata)</CardTitle>
                 <Badge v-if="loggingOn" variant="success">recording</Badge>
+                <span v-if="loggingOn" class="ml-2 inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <span :class="['inline-block h-2 w-2 rounded-full', streamDotClass]"></span>
+                  {{ streamLabel }}
+                  <button v-if="streamState === 'failed' || streamState === 'reconnecting'"
+                          type="button" class="text-primary hover:underline" @click="reconnectLogStream">
+                    Reconnect
+                  </button>
+                </span>
               </div>
-              <Button variant="outline" size="sm" @click="logOpen = true">Open log</Button>
+              <Button variant="outline" size="sm" @click="logOpen = true">Open full log</Button>
             </CardHeader>
-            <CardContent class="text-sm text-muted-foreground">
-              <span v-if="!loggingOn">Disabled. Enable to capture destination IP/port and hostname (DNS / TLS SNI / HTTP Host) for this peer.</span>
-              <span v-else>
-                Capturing.
-                <span v-if="client.logBufferSize">Buffer holds {{ client.logBufferSize }} event(s).</span>
-              </span>
+            <CardContent class="text-sm">
+              <p v-if="!loggingOn" class="text-muted-foreground">
+                Disabled. Enable to capture destination IP/port and hostname (DNS / TLS SNI / HTTP Host) for this peer.
+                Open the full log dialog to toggle capture.
+              </p>
+              <template v-else>
+                <div v-if="visibleLiveEvents.length === 0"
+                     class="rounded-md border bg-muted/30 px-3 py-6 text-center text-xs text-muted-foreground">
+                  Waiting for traffic…
+                </div>
+                <ul v-else class="rounded-md border divide-y bg-muted/20 max-h-72 overflow-y-auto font-mono text-xs">
+                  <li v-for="(e, i) in visibleLiveEvents" :key="i"
+                      class="flex items-center gap-2 px-3 py-1.5">
+                    <span class="text-muted-foreground tabular-nums shrink-0">{{ fmtEventTime(e.ts).split(', ').pop() }}</span>
+                    <Badge :variant="eventTypeVariant(e.type)" class="shrink-0 uppercase font-mono text-[10px]">{{ e.type }}</Badge>
+                    <span v-if="e.hostname" class="flex items-center gap-1 truncate">
+                      <HugeiconsIcon :icon="GlobeIcon" :size="11" :stroke-width="2" class="text-muted-foreground shrink-0" />
+                      <span class="truncate">{{ e.hostname }}</span>
+                    </span>
+                    <span v-else class="truncate text-muted-foreground">{{ e.dstIp }}</span>
+                    <span class="ml-auto text-muted-foreground shrink-0">
+                      {{ e.protocol ? e.protocol + '/' : '' }}{{ e.dstPort || '?' }}
+                    </span>
+                  </li>
+                </ul>
+                <p class="mt-1 text-[11px] text-muted-foreground text-right">
+                  Showing latest {{ visibleLiveEvents.length }} of {{ liveEvents.length }} buffered ·
+                  <button class="hover:underline text-primary" @click="logOpen = true">open full log</button>
+                  for filter, pause, and history.
+                </p>
+              </template>
             </CardContent>
           </Card>
         </div>
