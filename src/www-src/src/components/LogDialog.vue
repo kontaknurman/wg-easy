@@ -181,10 +181,13 @@ const sourceEvents = computed(() => (mode.value === 'history' ? historyEvents.va
 const filtered = computed(() => {
   const q = filter.value.trim().toLowerCase();
   const base = sourceEvents.value;
-  if (!q) return base;
-  return base.filter(e => (e.hostname || '').toLowerCase().includes(q)
-    || (e.dstIp || '').includes(q)
-    || (e.type || '').includes(q));
+  const matched = q
+    ? base.filter(e => (e.hostname || '').toLowerCase().includes(q)
+      || (e.dstIp || '').includes(q)
+      || (e.type || '').includes(q))
+    : base;
+  // Newest first for display.
+  return matched.slice().reverse();
 });
 
 const streamLabel = computed(() => {
