@@ -4,7 +4,7 @@ import {
 } from 'vue';
 import { HugeiconsIcon } from '@hugeicons/vue';
 import {
-  EyeIcon, AlertCircleIcon, PauseIcon, PlayIcon, EraserIcon, GlobeIcon,
+  EyeIcon, PauseIcon, PlayIcon, EraserIcon,
 } from '@hugeicons/core-free-icons';
 import Dialog from '@/components/ui/Dialog.vue';
 import DialogContent from '@/components/ui/DialogContent.vue';
@@ -12,44 +12,42 @@ import DialogHeader from '@/components/ui/DialogHeader.vue';
 import DialogTitle from '@/components/ui/DialogTitle.vue';
 import DialogDescription from '@/components/ui/DialogDescription.vue';
 import Button from '@/components/ui/Button.vue';
-import Switch from '@/components/ui/Switch.vue';
 import Input from '@/components/ui/Input.vue';
-import Label from '@/components/ui/Label.vue';
 import Badge from '@/components/ui/Badge.vue';
 import Select from '@/components/ui/Select.vue';
 import { api } from '@/api/client';
-import { toast, toastError } from '@/lib/toast';
-import { formatTimeOnly, listTimezones } from '@/lib/utils';
+import { toastError } from '@/lib/toast';
+import { listTimezones } from '@/lib/utils';
 
 const props = defineProps({
   open: { type: Boolean, default: false },
   client: { type: Object, default: null },
 });
-const emit = defineEmits(['update:open', 'changed']);
+const emit = defineEmits(['update:open']);
 
-const enabled = ref(false);
+const LIVE_CAP = 500;        // events kept in the live tab
+const HISTORY_CAP = 2000;    // events fetched per History "Load"
+
 const events = ref([]);
 const paused = ref(false);
 const filter = ref('');
-const streamState = ref('idle'); // 'idle' | 'connecting' | 'open' | 'reconnecting' | 'failed'
-const mode = ref('live'); // 'live' | 'history'
-const retentionDraft = ref(0);
+const streamState = ref('idle');
+const mode = ref('live');
 const historyEvents = ref([]);
 const historyLoading = ref(false);
-const historyRange = ref('24h'); // '1h' | '24h' | '7d' | '30d' | 'custom'
+const historyRange = ref('24h');
 const historyFrom = ref('');
 const historyTo = ref('');
 const displayTz = ref('');
+
 let evtSource = null;
+let pendingEvents = [];
+let flushHandle = null;
 
 const peerTimezone = computed(() => props.client?.schedule?.timezone || 'UTC');
-// Effective timezone applied to clock formatting + history API requests.
-// Falls back to the peer's schedule timezone when the user hasn't picked one.
 const timezone = computed(() => displayTz.value || peerTimezone.value);
 const timezoneOptions = computed(() => listTimezones().map(tz => ({ value: tz, label: tz })));
 
-// Per-peer persistence so a manually picked display timezone survives reload
-// and re-opening the dialog. Stored as a plain string per clientId.
 const TZ_STORAGE_PREFIX = 'logDialog.displayTz.';
 function loadStoredTz(clientId) {
   if (!clientId || typeof window === 'undefined' || !window.localStorage) return '';
@@ -60,7 +58,26 @@ function storeTz(clientId, tz) {
   try {
     if (tz) window.localStorage.setItem(TZ_STORAGE_PREFIX + clientId, tz);
     else window.localStorage.removeItem(TZ_STORAGE_PREFIX + clientId);
-  } catch { /* quota / private mode */ }
+  } catch { /* ignore quota */ }
+}
+
+// Cached DateTimeFormat instance keyed by timezone string. Constructing
+// `Intl.DateTimeFormat` is the slow part; reusing is cheap.
+let fmtCache = { tz: '', fmt: null };
+function fmtTime(ts) {
+  if (!ts) return '';
+  const t = ts instanceof Date ? ts : new Date(ts);
+  if (Number.isNaN(t.getTime())) return '';
+  const tz = timezone.value;
+  if (fmtCache.tz !== tz) {
+    fmtCache = {
+      tz,
+      fmt: new Intl.DateTimeFormat(undefined, {
+        hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, timeZone: tz,
+      }),
+    };
+  }
+  return fmtCache.fmt.format(t);
 }
 
 function setOpen(v) { emit('update:open', v); }
@@ -70,40 +87,49 @@ function closeStream() {
     try { evtSource.close(); } catch { /* ignore */ }
     evtSource = null;
   }
+  if (flushHandle) {
+    cancelAnimationFrame(flushHandle);
+    flushHandle = null;
+  }
+  pendingEvents = [];
   streamState.value = 'idle';
+}
+
+function flushPending() {
+  flushHandle = null;
+  if (paused.value || pendingEvents.length === 0) {
+    pendingEvents = [];
+    return;
+  }
+  // Single push of the whole batch — one Vue reactivity cycle for N events.
+  events.value.push(...pendingEvents);
+  pendingEvents = [];
+  if (events.value.length > LIVE_CAP) {
+    events.value.splice(0, events.value.length - LIVE_CAP);
+  }
 }
 
 function openStream() {
   closeStream();
-  if (!props.client) return;
-  if (typeof window === 'undefined' || !window.EventSource) return;
-  const url = api.logStreamUrl({ clientId: props.client.id });
+  if (!props.client || typeof window === 'undefined' || !window.EventSource) return;
   streamState.value = 'connecting';
-  evtSource = new EventSource(url);
+  evtSource = new EventSource(api.logStreamUrl({ clientId: props.client.id }));
   evtSource.onopen = () => { streamState.value = 'open'; };
   evtSource.onmessage = (e) => {
     streamState.value = 'open';
     if (paused.value) return;
     try {
-      const event = JSON.parse(e.data);
-      events.value.push(event);
-      if (events.value.length > 1000) events.value.splice(0, events.value.length - 1000);
-    } catch { /* ignore */ }
+      const ev = JSON.parse(e.data);
+      pendingEvents.push(ev);
+      if (!flushHandle) flushHandle = requestAnimationFrame(flushPending);
+    } catch { /* ignore malformed line */ }
   };
   evtSource.onerror = () => {
-    // EventSource auto-reconnects unless readyState becomes CLOSED.
-    if (evtSource && evtSource.readyState === 2 /* CLOSED */) {
-      streamState.value = 'failed';
-    } else {
-      streamState.value = 'reconnecting';
-    }
+    if (evtSource && evtSource.readyState === 2) streamState.value = 'failed';
+    else streamState.value = 'reconnecting';
   };
 }
 
-// Reset list state when the peer changes (or the dialog reopens for a new
-// peer). NOT triggered by mere prop refreshes — earlier this watcher used to
-// fire whenever logRetentionDays / loggingEnabled flipped, wiping events and
-// snapping the user back to the live tab while they were reading history.
 watch(
   () => props.client?.id,
   (id) => {
@@ -117,19 +143,8 @@ watch(
   { immediate: true },
 );
 
-// Persist the display timezone choice per peer.
-watch(displayTz, (v) => {
-  storeTz(props.client?.id, v);
-});
+watch(displayTz, (v) => storeTz(props.client?.id, v));
 
-// Stream lifecycle is split per concern so a parent re-fetch (which produces
-// new client objects on every poll) doesn't accidentally tear down or
-// duplicate the stream:
-//
-//   1. dialog open / close      → (re)connect or disconnect
-//   2. loggingEnabled toggle    → start or stop the SSE while still open
-//   3. retentionDays change     → only mirror the input; never touches stream
-//
 watch(
   () => props.open,
   (open) => {
@@ -137,9 +152,7 @@ watch(
       closeStream();
       return;
     }
-    enabled.value = !!props.client.loggingEnabled;
-    retentionDraft.value = props.client.logRetentionDays || 0;
-    if (enabled.value) openStream();
+    if (props.client.loggingEnabled) openStream();
   },
   { immediate: true },
 );
@@ -148,69 +161,32 @@ watch(
   () => props.client?.loggingEnabled,
   (logging) => {
     if (!props.open) return;
-    enabled.value = !!logging;
     if (logging) openStream();
     else closeStream();
   },
 );
 
-watch(
-  () => props.client?.logRetentionDays,
-  (days) => {
-    if (props.open) retentionDraft.value = days || 0;
-  },
-);
-
 onUnmounted(() => closeStream());
 
-async function setLoggingEnabled(v) {
-  if (!props.client) return;
-  try {
-    await api.updateClientLogging({ clientId: props.client.id, loggingEnabled: v });
-    enabled.value = v;
-    if (v) {
-      openStream();
-      toast({ title: 'Logging enabled', description: 'Capturing connection metadata for this peer.' });
-    } else {
-      closeStream();
-      events.value = [];
-      toast({ title: 'Logging disabled' });
-    }
-    emit('changed');
-  } catch (err) {
-    toastError(err);
-  }
-}
-
 function clearEvents() { events.value = []; }
-function togglePause() { paused.value = !paused.value; }
-
-async function saveRetention() {
-  if (!props.client) return;
-  const days = Math.max(0, Math.min(365, parseInt(retentionDraft.value, 10) || 0));
-  retentionDraft.value = days;
-  try {
-    await api.updateClientLogRetention({ clientId: props.client.id, logRetentionDays: days });
-    toast({
-      title: days > 0 ? 'Retention saved' : 'Retention disabled',
-      description: days > 0 ? `Persisting events for ${days} day${days === 1 ? '' : 's'}.` : 'On-disk log file removed.',
-    });
-    emit('changed');
-  } catch (err) { toastError(err); }
+function togglePause() {
+  paused.value = !paused.value;
+  if (!paused.value && pendingEvents.length > 0 && !flushHandle) {
+    flushHandle = requestAnimationFrame(flushPending);
+  }
 }
 
 function rangeToBounds(r) {
   const now = Date.now();
   switch (r) {
-    case '1h': return { from: new Date(now - 60 * 60 * 1000), to: new Date(now) };
-    case '24h': return { from: new Date(now - 24 * 60 * 60 * 1000), to: new Date(now) };
-    case '7d': return { from: new Date(now - 7 * 24 * 60 * 60 * 1000), to: new Date(now) };
-    case '30d': return { from: new Date(now - 30 * 24 * 60 * 60 * 1000), to: new Date(now) };
-    case 'custom': {
-      const f = historyFrom.value ? new Date(historyFrom.value) : null;
-      const t = historyTo.value ? new Date(historyTo.value) : null;
-      return { from: f, to: t };
-    }
+    case '1h': return { from: new Date(now - 3600_000), to: new Date(now) };
+    case '24h': return { from: new Date(now - 86_400_000), to: new Date(now) };
+    case '7d': return { from: new Date(now - 7 * 86_400_000), to: new Date(now) };
+    case '30d': return { from: new Date(now - 30 * 86_400_000), to: new Date(now) };
+    case 'custom': return {
+      from: historyFrom.value ? new Date(historyFrom.value) : null,
+      to: historyTo.value ? new Date(historyTo.value) : null,
+    };
     default: return {};
   }
 }
@@ -221,9 +197,9 @@ async function loadHistory() {
   try {
     const { from, to } = rangeToBounds(historyRange.value);
     const r = await api.getClientLogHistory({
-      clientId: props.client.id, from, to, limit: 5000, tz: timezone.value || undefined,
+      clientId: props.client.id, from, to, limit: HISTORY_CAP, tz: timezone.value,
     });
-    historyEvents.value = (r.events || []);
+    historyEvents.value = r.events || [];
   } catch (err) {
     toastError(err);
   } finally {
@@ -246,10 +222,6 @@ const filtered = computed(() => {
     || (e.type || '').includes(q));
 });
 
-function fmtTime(ts) {
-  return formatTimeOnly(ts, timezone.value);
-}
-
 const streamLabel = computed(() => {
   switch (streamState.value) {
     case 'open': return 'Live';
@@ -259,7 +231,6 @@ const streamLabel = computed(() => {
     default: return 'Idle';
   }
 });
-
 const streamDotClass = computed(() => {
   switch (streamState.value) {
     case 'open': return 'bg-emerald-500';
@@ -269,13 +240,6 @@ const streamDotClass = computed(() => {
     default: return 'bg-muted-foreground/40';
   }
 });
-
-function reconnect() {
-  if (!enabled.value) return;
-  events.value = [];
-  openStream();
-}
-
 function badgeVariant(type) {
   switch (type) {
     case 'tls': return 'success';
@@ -285,155 +249,139 @@ function badgeVariant(type) {
     default: return 'outline';
   }
 }
+
+function reconnect() {
+  events.value = [];
+  openStream();
+}
 </script>
 
 <template>
   <Dialog :open="open" @update:open="setOpen">
-    <DialogContent class="max-w-2xl">
-      <DialogHeader>
+    <DialogContent class="max-w-3xl flex flex-col p-0 max-h-[90vh] gap-0">
+
+      <DialogHeader class="px-6 pt-5 pb-3 border-b shrink-0">
         <DialogTitle class="flex items-center gap-2">
-          <HugeiconsIcon :icon="EyeIcon" :size="20" :stroke-width="2" />
+          <HugeiconsIcon :icon="EyeIcon" :size="18" :stroke-width="2" />
           Connection log
+          <span v-if="client" class="text-sm font-normal text-muted-foreground">· {{ client.name }}</span>
         </DialogTitle>
-        <DialogDescription v-if="client">
-          Real-time connection metadata for <span class="font-medium text-foreground">{{ client.name }}</span>.
+        <DialogDescription v-if="client" class="text-xs">
+          Connection metadata only — destination IP/port + hostname (DNS / TLS SNI / HTTP Host).
+          No URL paths, no payloads.
         </DialogDescription>
       </DialogHeader>
 
-      <div class="grid gap-3">
-        <div class="flex items-start gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs">
-          <HugeiconsIcon :icon="AlertCircleIcon" :size="18" :stroke-width="2" class="mt-0.5 shrink-0 text-amber-600" />
-          <div class="text-amber-700 dark:text-amber-300">
-            <p class="font-medium">Privacy notice</p>
-            <p class="opacity-90">
-              Captures destination IP, port, and hostname (DNS / TLS SNI / HTTP Host).
-              <strong>No URL paths, no payloads, no HTTPS bodies.</strong> Buffer is in-memory only and lost on
-              restart. Use only on systems you own and inform your users.
-            </p>
-          </div>
-        </div>
+      <!-- Settings hint when logging is off -->
+      <div v-if="!client?.loggingEnabled"
+           class="px-6 py-8 text-center text-sm text-muted-foreground">
+        Logging is disabled for this peer. Enable it from the dashboard card or the detail page to start capturing events.
+      </div>
 
-        <div class="flex items-center justify-between rounded-lg border p-3">
-          <div class="space-y-0.5">
-            <Label class="text-base">Enable logging</Label>
-            <p class="text-xs text-muted-foreground">
-              Spawns conntrack + tshark globally on first enable. Only this peer's events are recorded.
-            </p>
-          </div>
-          <Switch :model-value="enabled" @update:model-value="setLoggingEnabled" />
-        </div>
-
-        <div v-if="enabled" class="grid gap-2 rounded-lg border p-3">
-          <div class="flex items-center justify-between gap-2">
-            <div>
-              <Label class="text-sm">Persist to disk</Label>
-              <p class="text-[11px] text-muted-foreground">
-                Days to keep on-disk history (0 = memory only, max 365). Hourly pruner trims older entries.
-              </p>
+      <template v-else>
+        <!-- Compact toolbar -->
+        <div class="px-6 py-3 border-b shrink-0 flex flex-col gap-2">
+          <!-- Tabs + status -->
+          <div class="flex flex-wrap items-center gap-2">
+            <div class="flex items-center gap-1 rounded-md border bg-muted/30 p-1 text-xs">
+              <button type="button"
+                      :class="['rounded px-3 py-1 transition-colors', mode === 'live' ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground']"
+                      @click="mode = 'live'">Live</button>
+              <button type="button"
+                      :class="['rounded px-3 py-1 transition-colors', mode === 'history' ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground']"
+                      @click="mode = 'history'">History</button>
             </div>
-            <div class="flex items-center gap-1">
-              <Input v-model.number="retentionDraft" type="number" min="0" max="365" class="h-8 w-20 text-right" />
-              <span class="text-xs text-muted-foreground">days</span>
-              <Button size="sm" variant="outline" @click="saveRetention">Save</Button>
-            </div>
-          </div>
-        </div>
-
-        <div v-if="enabled" class="flex items-center gap-1 rounded-md border bg-muted/30 p-1 text-xs">
-          <button type="button"
-                  :class="['flex-1 rounded px-2 py-1 transition-colors', mode === 'live' ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground']"
-                  @click="mode = 'live'">Live stream</button>
-          <button type="button"
-                  :class="['flex-1 rounded px-2 py-1 transition-colors', mode === 'history' ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground']"
-                  @click="mode = 'history'">History</button>
-        </div>
-
-        <div v-if="enabled" class="flex flex-wrap items-center gap-2 rounded-md border bg-muted/20 px-2 py-1 text-xs">
-          <span class="text-muted-foreground">Display timezone:</span>
-          <Select v-model="displayTz" :options="timezoneOptions" :placeholder="`(peer: ${peerTimezone})`"
-                  class="min-w-[12rem]" trigger-class="h-7 w-56" />
-          <button v-if="displayTz" type="button" class="text-muted-foreground hover:text-foreground" @click="displayTz = ''">
-            reset
-          </button>
-        </div>
-
-        <div v-if="enabled && mode === 'live'" class="grid gap-2">
-          <div class="flex items-center justify-between gap-2 rounded-md border bg-muted/20 px-2 py-1 text-xs">
-            <div class="flex items-center gap-2">
+            <div v-if="mode === 'live'" class="flex items-center gap-1.5 text-xs">
               <span :class="['inline-block h-2 w-2 rounded-full', streamDotClass]"></span>
-              <span class="font-medium">{{ streamLabel }}</span>
+              <span>{{ streamLabel }}</span>
+              <button v-if="streamState === 'failed' || streamState === 'reconnecting'"
+                      type="button" class="text-primary hover:underline" @click="reconnect">
+                Reconnect
+              </button>
             </div>
-            <button v-if="streamState === 'failed' || streamState === 'reconnecting'"
-                    type="button"
-                    class="text-primary hover:underline" @click="reconnect">Reconnect</button>
+            <div v-if="mode === 'live'" class="ml-auto flex items-center gap-1">
+              <Button variant="outline" size="sm" :title="paused ? 'Resume' : 'Pause'" @click="togglePause">
+                <HugeiconsIcon :icon="paused ? PlayIcon : PauseIcon" :size="14" :stroke-width="2" />
+                {{ paused ? 'Resume' : 'Pause' }}
+              </Button>
+              <Button variant="outline" size="sm" title="Clear list" @click="clearEvents">
+                <HugeiconsIcon :icon="EraserIcon" :size="14" :stroke-width="2" />
+                Clear
+              </Button>
+            </div>
           </div>
-          <div class="flex items-center gap-2">
-            <Input v-model="filter" placeholder="Filter by hostname, IP, or type…" class="h-8" />
-            <Button variant="outline" size="sm" :title="paused ? 'Resume' : 'Pause'" @click="togglePause">
-              <HugeiconsIcon :icon="paused ? PlayIcon : PauseIcon" :size="14" :stroke-width="2" />
-              {{ paused ? 'Resume' : 'Pause' }}
-            </Button>
-            <Button variant="outline" size="sm" title="Clear list" @click="clearEvents">
-              <HugeiconsIcon :icon="EraserIcon" :size="14" :stroke-width="2" />
-              Clear
-            </Button>
-          </div>
-        </div>
 
-        <div v-if="enabled && mode === 'history'" class="grid gap-2">
-          <div class="flex flex-wrap items-center gap-2 rounded-md border bg-muted/20 p-2">
-            <span class="text-xs text-muted-foreground">Range:</span>
+          <!-- Filter + timezone -->
+          <div class="flex flex-wrap items-center gap-2">
+            <Input v-model="filter" placeholder="Filter hostname / IP / type…" class="h-8 flex-1 min-w-[10rem] text-xs" />
+            <Select v-model="displayTz" :options="timezoneOptions" :placeholder="`tz: ${peerTimezone}`"
+                    trigger-class="h-8 w-44 text-xs" />
+            <button v-if="displayTz" type="button" class="text-xs text-muted-foreground hover:text-foreground" @click="displayTz = ''">
+              reset tz
+            </button>
+          </div>
+
+          <!-- History range -->
+          <div v-if="mode === 'history'" class="flex flex-wrap items-center gap-2 text-xs">
+            <span class="text-muted-foreground">Range:</span>
             <button v-for="r in ['1h', '24h', '7d', '30d', 'custom']" :key="r"
                     type="button"
-                    :class="['rounded px-2 py-1 text-xs', historyRange === r ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground']"
+                    :class="['rounded px-2 py-1', historyRange === r ? 'bg-secondary font-medium' : 'text-muted-foreground hover:text-foreground']"
                     @click="historyRange = r">{{ r }}</button>
             <template v-if="historyRange === 'custom'">
-              <Input v-model="historyFrom" type="datetime-local" class="h-7 w-44 text-xs" />
-              <span class="text-muted-foreground text-xs">→</span>
-              <Input v-model="historyTo" type="datetime-local" class="h-7 w-44 text-xs" />
+              <Input v-model="historyFrom" type="datetime-local" class="h-7 w-44" />
+              <span class="text-muted-foreground">→</span>
+              <Input v-model="historyTo" type="datetime-local" class="h-7 w-44" />
             </template>
             <Button size="sm" variant="outline" :disabled="historyLoading" @click="loadHistory">
               {{ historyLoading ? 'Loading…' : 'Load' }}
             </Button>
-            <Input v-model="filter" placeholder="Filter…" class="ml-auto h-7 w-48 text-xs" />
+            <span v-if="(client.logRetentionDays || 0) === 0" class="ml-auto text-amber-700 dark:text-amber-400">
+              Retention is 0 — only memory buffer available.
+            </span>
           </div>
-          <p v-if="(props.client?.logRetentionDays || 0) === 0"
-             class="rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-[11px] text-amber-700 dark:text-amber-300">
-            Retention is disabled — set a non-zero "Persist to disk" value above to keep events for later viewing.
-          </p>
         </div>
 
-        <div v-if="enabled" class="rounded-md border bg-muted/30 max-h-[420px] overflow-y-auto font-mono text-xs">
-          <div v-if="filtered.length === 0" class="p-6 text-center text-muted-foreground">
+        <!-- Scrollable event list — fills available space -->
+        <div class="flex-1 min-h-[200px] overflow-y-auto bg-muted/20 font-mono text-xs">
+          <div v-if="filtered.length === 0" class="flex h-full items-center justify-center p-6 text-center text-muted-foreground">
             <p v-if="mode === 'live' && events.length === 0 && (streamState === 'connecting' || streamState === 'reconnecting')">
               Connecting…
             </p>
             <p v-else-if="mode === 'live' && events.length === 0 && streamState === 'failed'">
-              Stream disconnected. Click Reconnect above.
+              Stream disconnected. Click Reconnect.
             </p>
             <p v-else-if="mode === 'live' && events.length === 0">No events captured yet — generate some traffic.</p>
             <p v-else-if="mode === 'history' && historyEvents.length === 0">No events in this range.</p>
             <p v-else>No events match the filter.</p>
           </div>
-          <div v-for="e in filtered" :key="`${e.ts}-${e.type}-${e.hostname || e.dstIp}-${e.dstPort}`"
-               class="flex items-start gap-2 border-b border-border/50 px-3 py-2 last:border-b-0">
-            <span class="text-muted-foreground tabular-nums">{{ fmtTime(e.ts) }}</span>
-            <Badge :variant="badgeVariant(e.type)" class="shrink-0 uppercase font-mono text-[10px]">{{ e.type }}</Badge>
-            <span v-if="e.hostname" class="flex-1 truncate flex items-center gap-1">
-              <HugeiconsIcon :icon="GlobeIcon" :size="11" :stroke-width="2" class="text-muted-foreground shrink-0" />
-              <span class="truncate">{{ e.hostname }}</span>
-            </span>
-            <span v-else class="flex-1 truncate text-muted-foreground">{{ e.dstIp }}</span>
-            <span class="text-muted-foreground shrink-0">
-              {{ e.protocol ? e.protocol + '/' : '' }}{{ e.dstPort || '?' }}
-            </span>
+          <div v-else>
+            <div v-for="e in filtered" :key="`${e.ts}-${e.type}-${e.hostname || e.dstIp}-${e.dstPort}`"
+                 class="flex items-center gap-2 border-b border-border/30 px-4 py-1.5 last:border-b-0">
+              <span class="text-muted-foreground tabular-nums shrink-0 w-[5.5rem]">{{ fmtTime(e.ts) }}</span>
+              <Badge :variant="badgeVariant(e.type)" class="shrink-0 uppercase font-mono text-[10px] w-14 justify-center">{{ e.type }}</Badge>
+              <span class="flex-1 truncate">{{ e.hostname || e.dstIp || '?' }}</span>
+              <span class="text-muted-foreground shrink-0 w-20 text-right">
+                {{ e.protocol ? `${e.protocol}/` : '' }}{{ e.dstPort || '?' }}
+              </span>
+            </div>
           </div>
         </div>
-        <p v-if="enabled" class="text-xs text-muted-foreground text-right">
-          <template v-if="mode === 'live'">{{ filtered.length }} / {{ events.length }} events {{ paused ? '· paused' : '' }}</template>
-          <template v-else>{{ filtered.length }} / {{ historyEvents.length }} events from disk</template>
-        </p>
-      </div>
+
+        <!-- Footer -->
+        <div class="px-6 py-2 border-t shrink-0 flex items-center justify-between text-[11px] text-muted-foreground">
+          <span>
+            <template v-if="mode === 'live'">
+              {{ filtered.length }} / {{ events.length }} events
+              <span v-if="paused" class="text-amber-700 dark:text-amber-400">· paused</span>
+            </template>
+            <template v-else>
+              {{ filtered.length }} / {{ historyEvents.length }} events from disk
+            </template>
+          </span>
+          <span>tz: {{ timezone }}</span>
+        </div>
+      </template>
     </DialogContent>
   </Dialog>
 </template>
