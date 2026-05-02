@@ -186,6 +186,42 @@ async function saveBlockedDomains(blockedDomains) {
     await refresh();
   } catch (err) { toastError(err); }
 }
+
+const retentionDraft = ref(0);
+const retentionSaving = ref(false);
+
+watch(
+  () => client.value?.id,
+  () => { retentionDraft.value = client.value?.logRetentionDays || 0; },
+);
+watch(
+  () => client.value?.logRetentionDays,
+  (v) => { retentionDraft.value = v || 0; },
+);
+
+async function setLoggingEnabled(value) {
+  if (!client.value) return;
+  try {
+    await api.updateClientLogging({ clientId: client.value.id, loggingEnabled: value });
+    toast({ title: value ? 'Logging enabled' : 'Logging disabled' });
+    await refresh();
+  } catch (err) { toastError(err); }
+}
+
+async function saveRetention() {
+  if (!client.value) return;
+  retentionSaving.value = true;
+  try {
+    const days = Math.max(0, Math.min(365, parseInt(retentionDraft.value, 10) || 0));
+    retentionDraft.value = days;
+    await api.updateClientLogRetention({ clientId: client.value.id, logRetentionDays: days });
+    toast({
+      title: days > 0 ? 'Retention saved' : 'Retention disabled',
+      description: days > 0 ? `Persisting events for ${days} day${days === 1 ? '' : 's'}.` : 'On-disk log file removed.',
+    });
+    await refresh();
+  } catch (err) { toastError(err); } finally { retentionSaving.value = false; }
+}
 async function confirmDelete() {
   try {
     await api.deleteClient({ clientId: client.value.id });
@@ -527,10 +563,30 @@ function eventTypeVariant(type) {
               </div>
               <Button variant="outline" size="sm" @click="logOpen = true">Open full log</Button>
             </CardHeader>
-            <CardContent class="text-sm">
+            <CardContent class="text-sm space-y-3">
+              <!-- Settings row: enable + retention -->
+              <div class="flex flex-wrap items-center gap-3 rounded-lg border p-3">
+                <div class="flex items-center gap-2">
+                  <Switch :model-value="loggingOn" @update:model-value="setLoggingEnabled" />
+                  <span class="text-sm">Enable</span>
+                </div>
+                <span class="h-5 w-px bg-border"></span>
+                <div :class="['flex items-center gap-2 text-sm', loggingOn ? '' : 'pointer-events-none opacity-50']">
+                  <span class="text-muted-foreground">Persist on disk:</span>
+                  <Input v-model.number="retentionDraft" type="number" min="0" max="365" class="h-7 w-16 text-right" />
+                  <span class="text-muted-foreground">days</span>
+                  <Button size="sm" variant="outline" :disabled="retentionSaving || (retentionDraft === (client.logRetentionDays || 0))" @click="saveRetention">
+                    {{ retentionSaving ? 'Saving…' : 'Save' }}
+                  </Button>
+                  <span v-if="(client.logRetentionDays || 0) === 0" class="text-[11px] text-muted-foreground">
+                    (memory only)
+                  </span>
+                </div>
+              </div>
+
+              <!-- Live preview -->
               <p v-if="!loggingOn" class="text-muted-foreground">
-                Disabled. Enable to capture destination IP/port and hostname (DNS / TLS SNI / HTTP Host) for this peer.
-                Open the full log dialog to toggle capture.
+                Logging disabled — toggle on to capture destination IP/port and hostname (DNS / TLS SNI / HTTP Host).
               </p>
               <template v-else>
                 <div v-if="visibleLiveEvents.length === 0"
