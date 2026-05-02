@@ -48,6 +48,21 @@ const peerTimezone = computed(() => props.client?.schedule?.timezone || 'UTC');
 const timezone = computed(() => displayTz.value || peerTimezone.value);
 const timezoneOptions = computed(() => listTimezones().map(tz => ({ value: tz, label: tz })));
 
+// Per-peer persistence so a manually picked display timezone survives reload
+// and re-opening the dialog. Stored as a plain string per clientId.
+const TZ_STORAGE_PREFIX = 'logDialog.displayTz.';
+function loadStoredTz(clientId) {
+  if (!clientId || typeof window === 'undefined' || !window.localStorage) return '';
+  try { return window.localStorage.getItem(TZ_STORAGE_PREFIX + clientId) || ''; } catch { return ''; }
+}
+function storeTz(clientId, tz) {
+  if (!clientId || typeof window === 'undefined' || !window.localStorage) return;
+  try {
+    if (tz) window.localStorage.setItem(TZ_STORAGE_PREFIX + clientId, tz);
+    else window.localStorage.removeItem(TZ_STORAGE_PREFIX + clientId);
+  } catch { /* quota / private mode */ }
+}
+
 function setOpen(v) { emit('update:open', v); }
 
 function closeStream() {
@@ -91,36 +106,59 @@ function openStream() {
 // snapping the user back to the live tab while they were reading history.
 watch(
   () => props.client?.id,
-  () => {
+  (id) => {
     events.value = [];
     historyEvents.value = [];
     mode.value = 'live';
     paused.value = false;
     filter.value = '';
-    displayTz.value = '';
+    displayTz.value = loadStoredTz(id);
   },
+  { immediate: true },
 );
 
-// Stream lifecycle reacts to dialog open + logging toggle without touching
-// the user's view state (mode, events, filter, picked timezone).
+// Persist the display timezone choice per peer.
+watch(displayTz, (v) => {
+  storeTz(props.client?.id, v);
+});
+
+// Stream lifecycle is split per concern so a parent re-fetch (which produces
+// new client objects on every poll) doesn't accidentally tear down or
+// duplicate the stream:
+//
+//   1. dialog open / close      → (re)connect or disconnect
+//   2. loggingEnabled toggle    → start or stop the SSE while still open
+//   3. retentionDays change     → only mirror the input; never touches stream
+//
 watch(
-  [
-    () => props.open,
-    () => props.client?.id,
-    () => props.client?.loggingEnabled,
-    () => props.client?.logRetentionDays,
-  ],
-  () => {
-    if (!props.open || !props.client) {
+  () => props.open,
+  (open) => {
+    if (!open || !props.client) {
       closeStream();
       return;
     }
     enabled.value = !!props.client.loggingEnabled;
     retentionDraft.value = props.client.logRetentionDays || 0;
-    if (enabled.value && !evtSource) openStream();
-    if (!enabled.value) closeStream();
+    if (enabled.value) openStream();
   },
   { immediate: true },
+);
+
+watch(
+  () => props.client?.loggingEnabled,
+  (logging) => {
+    if (!props.open) return;
+    enabled.value = !!logging;
+    if (logging) openStream();
+    else closeStream();
+  },
+);
+
+watch(
+  () => props.client?.logRetentionDays,
+  (days) => {
+    if (props.open) retentionDraft.value = days || 0;
+  },
 );
 
 onUnmounted(() => closeStream());
