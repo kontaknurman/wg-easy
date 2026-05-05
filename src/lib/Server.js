@@ -283,21 +283,46 @@ module.exports = class Server {
             'X-Accel-Buffering': 'no',
           });
           res.flushHeaders();
+          // Cap socket-level buffering. Without this Node will queue
+          // unbounded bytes for slow/stalled SSE clients, which on a
+          // 2 GB host is enough to OOM. When the kernel buffer fills,
+          // res.write returns false and we drop new events until drain.
+          if (req.socket && typeof req.socket.setNoDelay === 'function') {
+            req.socket.setNoDelay(true);
+          }
+
+          // Backpressure-aware writer: drop events while the underlying
+          // socket buffer hasn't drained. Live captures are inherently
+          // lossy on the network side already, so dropping a burst beats
+          // pinning the process memory.
+          let backpressured = false;
+          function safeWrite(chunk) {
+            if (backpressured) return false;
+            const ok = res.write(chunk);
+            if (!ok) {
+              backpressured = true;
+              res.once('drain', () => {
+                backpressured = false;
+              });
+            }
+            return ok;
+          }
 
           const buffered = WireGuard.getClientLogBuffer(clientId);
           for (const event of buffered) {
-            res.write(`data: ${JSON.stringify(event)}\n\n`);
+            safeWrite(`data: ${JSON.stringify(event)}\n\n`);
           }
 
           const unsubscribe = WireGuard.subscribeClientLog(clientId, event => {
             try {
-              res.write(`data: ${JSON.stringify(event)}\n\n`);
+              safeWrite(`data: ${JSON.stringify(event)}\n\n`);
             } catch { /* ignore */ }
           });
 
           const keepalive = setInterval(() => {
             try {
-              res.write(': ping\n\n');
+              // Skip pings under backpressure too so we don't extend the queue.
+              if (!backpressured) res.write(': ping\n\n');
             } catch { /* ignore */ }
           }, 20000);
 
