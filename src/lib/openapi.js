@@ -6,7 +6,6 @@ const errorSchema = {
   type: 'object',
   properties: {
     error: { type: 'string' },
-    stack: { type: 'string' },
   },
   required: ['error'],
 };
@@ -58,6 +57,7 @@ const clientSchema = {
     publicKey: { type: 'string' },
     createdAt: { type: 'string', format: 'date-time' },
     updatedAt: { type: 'string', format: 'date-time' },
+    endpoint: { type: ['string', 'null'], example: '203.0.113.5:51820', description: 'Current public `ip:port` of the peer as reported by `wg show dump`. Null when the peer has never connected.' },
     persistentKeepalive: { type: ['string', 'null'], description: 'Reported by `wg show dump`. May be null when the peer has never connected.' },
     latestHandshakeAt: { type: ['string', 'null'], format: 'date-time' },
     transferRx: { type: ['integer', 'null'], description: 'Bytes received from the peer (server upload).' },
@@ -68,12 +68,12 @@ const clientSchema = {
       type: 'integer', minimum: 0, maximum: 99, description: 'Maximum concurrent devices that may share this config. 0 disables the limit (default).',
     },
     activeDeviceCount: { type: 'integer', description: 'Distinct WireGuard endpoints with a fresh handshake (last ~3 minutes) currently using this config.' },
-    deviceLimitExceededAt: { type: ['string', 'null'], format: 'date-time', description: 'Set when the peer was auto-disabled because more than `maxDevices` endpoints were detected. Null when never tripped or after manual re-enable.' },
+    deviceLimitExceededAt: { type: ['string', 'null'], format: 'date-time', description: 'Set when more than `maxDevices` endpoints were detected (informational — the peer is not disabled). Cleared when the count drops back, on manual re-enable, or when the limit is updated.' },
     bandwidthLimit: {
-      type: 'integer', minimum: 0, maximum: 10000, description: 'Per-peer bandwidth cap in Mbps applied symmetrically (download via egress HTB on wg0, upload via ingress police). 0 disables the cap.',
+      type: 'integer', minimum: 0, maximum: 10000, description: 'Per-peer bandwidth cap in Mbps applied symmetrically (download via egress HTB on wg0, upload via HTB on the wg0ifb device — ingress police when IFB is unavailable). 0 disables the cap.',
     },
     loggingEnabled: { type: 'boolean', description: 'When true, the server captures connection events (conntrack) and hostname events (DNS / TLS SNI / HTTP Host via tshark) for this peer and exposes them on the SSE stream.' },
-    logBufferSize: { type: 'integer', description: 'Number of recent log events held in the in-memory ring buffer (max ~500).' },
+    logBufferSize: { type: 'integer', description: 'Number of recent log events held in the in-memory ring buffer (max 250).' },
     logRetentionDays: {
       type: 'integer',
       minimum: 0,
@@ -91,7 +91,7 @@ const clientSchema = {
       type: 'array',
       items: { type: 'string', example: 'youtube.com' },
       maxItems: 50,
-      description: 'Per-peer domain block-list. Patterns: `youtube.com` (matches the bare domain and every subdomain via substring), `*.facebook.com` (subdomains only), `*ads*` (free substring). Enforced via iptables string match on TLS SNI / HTTP Host / DNS payload (TCP 443, 80, 53 + UDP 53). REJECT for TCP, DROP for UDP.',
+      description: 'Per-peer domain block-list. Patterns: `youtube.com` (matches the bare domain and every subdomain via substring), `*.facebook.com` (subdomains only), `*ads*` (free substring). Enforced via case-insensitive iptables string match on TLS SNI / HTTP Host (first 16 KiB of TCP 80/443 connections) and DNS queries in wire format (TCP/UDP 53). REJECT for TCP, DROP for UDP. QUIC (UDP 443) is rejected for peers with a non-empty list so clients fall back to TLS over TCP.',
     },
   },
   required: ['id', 'name', 'enabled', 'address', 'publicKey', 'createdAt', 'updatedAt'],
@@ -200,7 +200,7 @@ function buildSpec(settings = {}) {
         get: {
           tags: ['Settings'],
           summary: 'Get site branding/settings',
-          description: 'Public — fetched by the SPA on every page load to render the brand name, login page copy, and toggle the API docs link.',
+          description: 'Public — fetched by the SPA on every page load to render the brand name, login page copy, and toggle the API docs link. Unauthenticated callers (when `PASSWORD` is set) only receive the branding fields; `apiAllowedIpsEnabled`, `apiAllowedIps` and `trustProxyHeader` are returned to logged-in sessions only.',
           security: [],
           responses: {
             200: {
@@ -254,6 +254,7 @@ function buildSpec(settings = {}) {
           responses: {
             204: { description: 'Login successful. A `connect.sid` cookie is set on the response.' },
             401: { description: 'Missing or incorrect password.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            429: { description: 'Too many failed attempts from this IP (10 per 15 minutes). See the `Retry-After` header.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
           },
         },
         delete: {
@@ -333,6 +334,16 @@ function buildSpec(settings = {}) {
             name: 'clientId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' },
           },
         ],
+        get: {
+          tags: ['Client'],
+          summary: 'Get one client with live stats',
+          description: 'Same object as one entry of `GET /api/wireguard/client` (including live transfer counters and `endpoint`). Cheaper for pages that only show a single peer.',
+          responses: {
+            200: { description: 'The client.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Client' } } } },
+            401: { description: 'Not logged in.' },
+            404: { description: 'Client not found.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          },
+        },
         delete: {
           tags: ['Client'],
           summary: 'Delete a client',
@@ -602,7 +613,7 @@ function buildSpec(settings = {}) {
         put: {
           tags: ['Logging'],
           summary: 'Enable or disable per-peer connection logging',
-          description: 'Captures **connection metadata only** — destination IP, port, and (when available) hostname extracted from DNS queries, TLS SNI, and HTTP Host headers. Backed by `conntrack -E` (every new TCP/UDP connection) and `tshark` (hostname events) running globally; events are filtered to enabled peers and held in an in-memory ring buffer (~500 per peer). **No payload, no URLs paths, no HTTPS bodies are captured.** Reading other peoples traffic metadata is sensitive — use only on systems you own.',
+          description: 'Captures **connection metadata only** — destination IP, port, and (when available) hostname extracted from DNS queries, TLS SNI, and HTTP Host headers. Backed by `conntrack -E` (every new TCP/UDP connection) and `tshark` (hostname events, fed through NFLOG with only DNS queries and the first 8 KiB of each connection of logged peers); events are filtered to enabled peers and held in an in-memory ring buffer (250 per peer). **No payload, no URLs paths, no HTTPS bodies are captured.** Reading other peoples traffic metadata is sensitive — use only on systems you own.',
           requestBody: {
             required: true,
             content: {
@@ -702,7 +713,7 @@ function buildSpec(settings = {}) {
         get: {
           tags: ['Logging'],
           summary: 'Live status of the global capture processes',
-          description: 'Useful for diagnosing why the connection log is empty. Returns `{ wanted, conntrackRunning, tsharkRunning }` — `wanted` is true when at least one peer has logging enabled, the other two reflect whether each background process is currently alive. The supervisor restarts dead processes within 30 seconds when `wanted` is true.',
+          description: 'Useful for diagnosing why the connection log is empty. Returns `{ wanted, conntrackRunning, tsharkRunning, captureMode }` — `wanted` is true when at least one peer has logging enabled, the next two reflect whether each background process is currently alive, and `captureMode` is `nflog` (kernel-filtered) or `bpf` (fallback capture on wg0). The supervisor restarts dead processes within 30 seconds when `wanted` is true.',
           responses: {
             200: { description: 'Current capture status.', content: { 'application/json': { schema: { type: 'object' } } } },
             401: { description: 'Not logged in.' },
@@ -755,7 +766,7 @@ function buildSpec(settings = {}) {
         get: {
           tags: ['Logging'],
           summary: 'Server-Sent Events stream of connection log events',
-          description: 'Returns `text/event-stream`. The current ring buffer is replayed first, then new events are streamed as they happen. Each `data:` frame is a JSON object with `ts`, `type` (`connection` | `dns` | `tls` | `http`), `srcIp`, `dstIp`, `dstPort`, `protocol`, and an optional `hostname`. A keep-alive comment line is sent every 20s.',
+          description: 'Returns `text/event-stream`. The current ring buffer is replayed first (only the events after `Last-Event-ID` when the client reconnects with that header), then new events are streamed as they happen. Every frame carries an `id:`. Each `data:` frame is a JSON object with `ts`, `type` (`connection` | `dns` | `tls` | `http`), `srcIp`, `dstIp`, `dstPort`, `protocol`, and an optional `hostname`. A keep-alive comment line is sent every 20s.',
           responses: {
             200: {
               description: 'Event stream.',

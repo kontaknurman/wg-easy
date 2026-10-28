@@ -1,3 +1,12 @@
+let unauthorizedHandler = null;
+
+// Called when an API request comes back 401 (the server restarted, or the
+// session expired) so the app can go to the login page instead of showing
+// an error toast on every poll.
+export function onUnauthorized(handler) {
+  unauthorizedHandler = handler;
+}
+
 async function call({ method, path, body, raw = false }) {
   const res = await fetch(`/api${path}`, {
     method,
@@ -19,9 +28,24 @@ async function call({ method, path, body, raw = false }) {
 
   if (!res.ok) {
     const msg = (data && data.error) || res.statusText || 'Request failed';
-    throw new Error(msg);
+    const err = new Error(msg);
+    // 401 on /session is just a wrong password, shown on the login form.
+    if (res.status === 401 && path !== '/session') {
+      err.unauthorized = true;
+      if (unauthorizedHandler) unauthorizedHandler();
+    }
+    throw err;
   }
   return data;
+}
+
+function normalizeClient(c) {
+  return {
+    ...c,
+    createdAt: c.createdAt ? new Date(c.createdAt) : null,
+    updatedAt: c.updatedAt ? new Date(c.updatedAt) : null,
+    latestHandshakeAt: c.latestHandshakeAt ? new Date(c.latestHandshakeAt) : null,
+  };
 }
 
 export const api = {
@@ -34,13 +58,9 @@ export const api = {
 
   getClients: async () => {
     const clients = await call({ method: 'GET', path: '/wireguard/client' });
-    return clients.map(c => ({
-      ...c,
-      createdAt: c.createdAt ? new Date(c.createdAt) : null,
-      updatedAt: c.updatedAt ? new Date(c.updatedAt) : null,
-      latestHandshakeAt: c.latestHandshakeAt ? new Date(c.latestHandshakeAt) : null,
-    }));
+    return clients.map(normalizeClient);
   },
+  getClient: async ({ clientId }) => normalizeClient(await call({ method: 'GET', path: `/wireguard/client/${clientId}` })),
   createClient: (payload) => call({ method: 'POST', path: '/wireguard/client', body: payload || {} }),
   deleteClient: ({ clientId }) => call({ method: 'DELETE', path: `/wireguard/client/${clientId}` }),
   enableClient: ({ clientId }) => call({ method: 'POST', path: `/wireguard/client/${clientId}/enable` }),

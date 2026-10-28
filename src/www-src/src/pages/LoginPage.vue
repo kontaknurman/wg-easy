@@ -3,6 +3,7 @@ import { ref, inject, computed } from 'vue';
 import { useRouter } from 'vue-router';
 import { api } from '@/api/client';
 import { toastError } from '@/lib/toast';
+import { loadSettings } from '@/lib/settings';
 import Card from '@/components/ui/Card.vue';
 import CardHeader from '@/components/ui/CardHeader.vue';
 import CardTitle from '@/components/ui/CardTitle.vue';
@@ -29,7 +30,8 @@ async function login() {
   submitting.value = true;
   try {
     await api.createSession({ password: password.value });
-    if (refreshSession) await refreshSession();
+    // Anonymous visitors only get the public branding fields.
+    await Promise.all([refreshSession ? refreshSession() : null, loadSettings()]);
     router.push('/');
   } catch (err) {
     toastError(err);

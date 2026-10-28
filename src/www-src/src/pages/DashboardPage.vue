@@ -1,7 +1,8 @@
 <script setup>
-import { ref, onMounted, onUnmounted, reactive, inject, computed } from 'vue';
+import { ref, inject, computed } from 'vue';
 import { api } from '@/api/client';
 import { toastError, toast } from '@/lib/toast';
+import { usePolling } from '@/lib/polling';
 import AppHeader from '@/components/AppHeader.vue';
 import Card from '@/components/ui/Card.vue';
 import CardHeader from '@/components/ui/CardHeader.vue';
@@ -27,7 +28,8 @@ const requiresPassword = computed(() => session.value?.requiresPassword || false
 
 const clients = ref([]);
 const loading = ref(true);
-const transferState = reactive({});
+// Last counter sample per client: { tx, rx, at, txRate, rxRate }.
+const transferState = {};
 
 const createOpen = ref(false);
 const deleteClient = ref(null);
@@ -39,24 +41,35 @@ const sourceIpClient = ref(null);
 const blockedDomainsClient = ref(null);
 const qrClient = ref(null);
 
-let pollTimer = null;
+// Bytes per second from two counter samples. The delta is divided by the
+// real time between samples (it used to be shown raw as "/s" although polls
+// are 2 s apart, doubling every rate). A refresh right after an action comes
+// too soon for a meaningful rate and keeps the previous one; after a long
+// pause (hidden tab) the average would mislead, so it restarts from zero.
+function updateRates(c, now) {
+  const tx = c.transferTx || 0;
+  const rx = c.transferRx || 0;
+  const prev = transferState[c.id];
+  let sample = { tx, rx, at: now, txRate: 0, rxRate: 0 };
+  if (prev) {
+    const seconds = (now - prev.at) / 1000;
+    if (seconds < 1) {
+      sample = prev;
+    } else if (seconds <= 10) {
+      sample.txRate = Math.max(0, tx - prev.tx) / seconds;
+      sample.rxRate = Math.max(0, rx - prev.rx) / seconds;
+    }
+  }
+  transferState[c.id] = sample;
+  c.transferTxCurrent = sample.txRate;
+  c.transferRxCurrent = sample.rxRate;
+}
 
 async function refresh() {
   try {
     const data = await api.getClients();
-    for (const c of data) {
-      if (!transferState[c.id]) {
-        transferState[c.id] = { txPrev: c.transferTx || 0, rxPrev: c.transferRx || 0, txCurrent: 0, rxCurrent: 0 };
-      } else {
-        const s = transferState[c.id];
-        s.txCurrent = Math.max(0, (c.transferTx || 0) - s.txPrev);
-        s.rxCurrent = Math.max(0, (c.transferRx || 0) - s.rxPrev);
-        s.txPrev = c.transferTx || 0;
-        s.rxPrev = c.transferRx || 0;
-      }
-      c.transferTxCurrent = transferState[c.id].txCurrent;
-      c.transferRxCurrent = transferState[c.id].rxCurrent;
-    }
+    const now = Date.now();
+    for (const c of data) updateRates(c, now);
     clients.value = data;
   } catch (err) {
     toastError(err);
@@ -146,11 +159,7 @@ async function saveBlockedDomains(blockedDomains) {
   } catch (err) { toastError(err); }
 }
 
-onMounted(() => {
-  refresh();
-  pollTimer = setInterval(refresh, 2000);
-});
-onUnmounted(() => { if (pollTimer) clearInterval(pollTimer); });
+usePolling(refresh, 2000);
 </script>
 
 <template>

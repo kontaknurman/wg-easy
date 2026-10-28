@@ -89,8 +89,10 @@ function save() {
           </div>
           <p class="text-xs text-muted-foreground">
             Applied symmetrically: download (server → client) is shaped via HTB on
-            <code class="rounded bg-muted px-1 py-0.5 text-[11px]">wg0</code> egress, upload is enforced via an
-            ingress <code class="rounded bg-muted px-1 py-0.5 text-[11px]">police</code> filter that drops excess.
+            <code class="rounded bg-muted px-1 py-0.5 text-[11px]">wg0</code> egress; upload is redirected to an
+            <code class="rounded bg-muted px-1 py-0.5 text-[11px]">ifb</code> device and shaped the same way
+            (falls back to an ingress <code class="rounded bg-muted px-1 py-0.5 text-[11px]">police</code> filter
+            when the kernel has no IFB support).
           </p>
         </div>
 
@@ -99,8 +101,8 @@ function save() {
           <p>
             Requires <code class="rounded bg-background px-1 py-0.5 text-[11px]">tc</code>
             (<code class="rounded bg-background px-1 py-0.5 text-[11px]">iproute2-tc</code>) on the host. Limits do
-            not survive interface restart unless the panel is the one bringing it up — rules are reapplied on every
-            config change and on the schedule ticker.
+            not survive interface restart unless the panel is the one bringing it up — rules are rebuilt when the
+            panel starts and whenever a limit, peer or schedule window changes.
           </p>
         </div>
       </div>

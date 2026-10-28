@@ -22,6 +22,6 @@
     "eslint-config-athom": "^2.1.0"
   },
   "engines": {
-    "node": "18"
+    "node": ">=18"
   }
 }

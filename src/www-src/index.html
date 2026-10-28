@@ -9,6 +9,16 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="theme-color" content="#0a0a0a" />
     <title>VPN Panel</title>
+    <script>
+      // Apply the saved / system theme before the first paint (no white flash,
+      // and pages without the header — e.g. login — follow it too).
+      try {
+        var theme = localStorage.getItem('theme');
+        if (theme ? theme === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches) {
+          document.documentElement.classList.add('dark');
+        }
+      } catch (e) { /* storage unavailable */ }
+    </script>
   </head>
   <body class="bg-background text-foreground antialiased">
     <div id="app"></div>
