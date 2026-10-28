@@ -39,6 +39,9 @@ const events = computed(() => (liveStore.value ? liveStore.value.events.value : 
 const streamState = computed(() => (liveStore.value ? liveStore.value.streamState.value : 'idle'));
 
 const paused = ref(false);
+// Frozen copy of the live list while paused; the stream keeps buffering in
+// the shared store underneath.
+const pausedEvents = shallowRef(null);
 const filter = ref('');
 // Multi-choice type filter. Empty = show all types.
 const typeFilter = ref(new Set());
@@ -129,6 +132,7 @@ watch(
     historyEvents.value = [];
     mode.value = 'live';
     paused.value = false;
+    pausedEvents.value = null;
     filter.value = '';
     displayTz.value = loadStoredTz(id);
     syncSubscription();
@@ -150,9 +154,11 @@ onUnmounted(() => {
 
 function clearEvents() {
   if (liveStore.value) liveStore.value.clear();
+  if (paused.value) pausedEvents.value = [];
 }
 function togglePause() {
   paused.value = !paused.value;
+  pausedEvents.value = paused.value ? events.value.slice() : null;
 }
 
 function rangeToBounds(r) {
@@ -190,7 +196,8 @@ watch(mode, (m) => {
   if (m === 'history' && historyEvents.value.length === 0) loadHistory();
 });
 
-const sourceEvents = computed(() => (mode.value === 'history' ? historyEvents.value : events.value));
+const liveEvents = computed(() => pausedEvents.value || events.value);
+const sourceEvents = computed(() => (mode.value === 'history' ? historyEvents.value : liveEvents.value));
 
 const filtered = computed(() => {
   const q = filter.value.trim().toLowerCase();
@@ -351,18 +358,18 @@ function reconnect() {
         <!-- Scrollable event list — fills available space -->
         <div class="flex-1 min-h-[200px] overflow-y-auto bg-muted/20 font-mono text-xs">
           <div v-if="filtered.length === 0" class="flex h-full items-center justify-center p-6 text-center text-muted-foreground">
-            <p v-if="mode === 'live' && events.length === 0 && (streamState === 'connecting' || streamState === 'reconnecting')">
+            <p v-if="mode === 'live' && liveEvents.length === 0 && (streamState === 'connecting' || streamState === 'reconnecting')">
               Connecting…
             </p>
-            <p v-else-if="mode === 'live' && events.length === 0 && streamState === 'failed'">
+            <p v-else-if="mode === 'live' && liveEvents.length === 0 && streamState === 'failed'">
               Stream disconnected. Click Reconnect.
             </p>
-            <p v-else-if="mode === 'live' && events.length === 0">No events captured yet — generate some traffic.</p>
+            <p v-else-if="mode === 'live' && liveEvents.length === 0">No events captured yet — generate some traffic.</p>
             <p v-else-if="mode === 'history' && historyEvents.length === 0">No events in this range.</p>
             <p v-else>No events match the filter.</p>
           </div>
           <div v-else>
-            <div v-for="e in filtered" :key="`${e.ts}-${e.type}-${e.hostname || e.dstIp}-${e.dstPort}`"
+            <div v-for="e in filtered" :key="e._id || `${e.ts}-${e.type}-${e.hostname || e.dstIp}-${e.dstPort}`"
                  class="flex items-center gap-2 border-b border-border/30 px-4 py-1.5 last:border-b-0">
               <span class="text-muted-foreground tabular-nums shrink-0 w-[5.5rem]">{{ fmtTime(e.ts) }}</span>
               <Badge :variant="badgeVariant(e.type)" class="shrink-0 uppercase font-mono text-[10px] w-14 justify-center">{{ e.type }}</Badge>
@@ -378,7 +385,7 @@ function reconnect() {
         <div class="px-6 py-2 border-t shrink-0 flex items-center justify-between text-[11px] text-muted-foreground">
           <span>
             <template v-if="mode === 'live'">
-              {{ filtered.length }} / {{ events.length }} events
+              {{ filtered.length }} / {{ liveEvents.length }} events
               <span v-if="paused" class="text-amber-700 dark:text-amber-400">· paused</span>
             </template>
             <template v-else>

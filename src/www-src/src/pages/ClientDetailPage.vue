@@ -1,10 +1,11 @@
 <script setup>
 import {
-  ref, shallowRef, computed, onMounted, onUnmounted, watch,
+  ref, shallowRef, computed, onUnmounted, watch,
 } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { api } from '@/api/client';
 import { attachLogStream, detachLogStream } from '@/lib/logStream';
+import { usePolling } from '@/lib/polling';
 import { toast, toastError } from '@/lib/toast';
 import {
   formatBytes, formatDateTime, formatRelative, formatInTimezone,
@@ -56,23 +57,21 @@ const logOpen = ref(false);
 const qrOpen = ref(false);
 const deleteOpen = ref(false);
 
-let pollTimer = null;
-let eventsTimer = null;
-
 const clientId = computed(() => route.params.id);
 
 async function refresh() {
   if (!clientId.value) return;
+  const requestedId = clientId.value;
   try {
-    const all = await api.getClients();
-    const found = all.find(c => c.id === clientId.value);
-    if (!found) {
+    const found = await api.getClient({ clientId: requestedId });
+    // Ignore a response for a peer we navigated away from meanwhile.
+    if (requestedId === clientId.value) client.value = found;
+  } catch (err) {
+    if (/not found/i.test(err.message || '')) {
       toast({ title: 'Client not found', variant: 'destructive' });
       router.push('/');
       return;
     }
-    client.value = found;
-  } catch (err) {
     toastError(err);
   } finally {
     loading.value = false;
@@ -96,15 +95,9 @@ watch(clientId, () => {
   refreshEvents();
 }, { immediate: false });
 
-onMounted(() => {
-  refresh();
-  refreshEvents();
-  pollTimer = setInterval(refresh, 3000);
-  eventsTimer = setInterval(refreshEvents, 5000);
-});
+usePolling(refresh, 3000);
+usePolling(refreshEvents, 5000);
 onUnmounted(() => {
-  if (pollTimer) clearInterval(pollTimer);
-  if (eventsTimer) clearInterval(eventsTimer);
   if (attachedLiveId) {
     detachLogStream(attachedLiveId);
     attachedLiveId = null;
@@ -374,6 +367,7 @@ function eventTypeVariant(type) {
                 </div>
                 <div class="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-sm text-muted-foreground">
                   <span class="font-mono">{{ client.address }}</span>
+                  <span v-if="client.endpoint" class="font-mono" title="Current public endpoint (from wg show)">from {{ client.endpoint }}</span>
                   <span v-if="client.latestHandshakeAt">Last handshake: {{ formatRelative(client.latestHandshakeAt) }}</span>
                   <span v-if="client.transferTx">↓ {{ formatBytes(client.transferTx) }}</span>
                   <span v-if="client.transferRx">↑ {{ formatBytes(client.transferRx) }}</span>

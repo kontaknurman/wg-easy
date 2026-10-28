@@ -39,6 +39,7 @@ const endpoints = {
   ],
   clients: [
     { method: 'GET', path: '/api/wireguard/client', desc: 'List all clients with live transfer stats.' },
+    { method: 'GET', path: '/api/wireguard/client/:id', desc: 'One client with live stats (same shape as a list entry, plus its current endpoint).' },
     { method: 'POST', path: '/api/wireguard/client', desc: 'Create a client. Body accepts every per-peer setting at creation time (see "Create body" detail card).' },
     { method: 'DELETE', path: '/api/wireguard/client/:id', desc: 'Delete a client.' },
     { method: 'POST', path: '/api/wireguard/client/:id/enable', desc: 'Set enabled=true.' },
@@ -52,10 +53,10 @@ const endpoints = {
     { method: 'PUT', path: '/api/wireguard/client/:id/schedule', desc: 'Replace per-day connection schedule.' },
   ],
   limits: [
-    { method: 'PUT', path: '/api/wireguard/client/:id/max-devices', desc: 'Set the maximum concurrent devices. 0 disables enforcement. When exceeded, the peer is auto-disabled and deviceLimitExceededAt is set.' },
-    { method: 'PUT', path: '/api/wireguard/client/:id/bandwidth-limit', desc: 'Set per-peer bandwidth cap in Mbps (0 = unlimited). Applied with Linux Traffic Control (tc HTB egress + ingress police).' },
+    { method: 'PUT', path: '/api/wireguard/client/:id/max-devices', desc: 'Set the maximum concurrent devices. 0 disables the check. When exceeded, deviceLimitExceededAt is set (informational — the peer stays enabled).' },
+    { method: 'PUT', path: '/api/wireguard/client/:id/bandwidth-limit', desc: 'Set per-peer bandwidth cap in Mbps (0 = unlimited). Applied with Linux Traffic Control (HTB on wg0 egress; uploads shaped through an IFB device, ingress police as fallback).' },
     { method: 'PUT', path: '/api/wireguard/client/:id/allowed-source-ips', desc: 'Set per-peer public-IP allow-list (CIDR). Empty = no restriction. Endpoint outside the list auto-disables the peer.' },
-    { method: 'PUT', path: '/api/wireguard/client/:id/blocked-domains', desc: 'Set per-peer domain block-list. Patterns: bare domain (matches it + subdomains), *.foo.com (subdomains only), *str* (free substring).' },
+    { method: 'PUT', path: '/api/wireguard/client/:id/blocked-domains', desc: 'Set per-peer domain block-list. Patterns: bare domain (matches it + subdomains), *.foo.com (subdomains only), *str* (free substring). QUIC (UDP 443) is rejected for peers with a non-empty list.' },
   ],
   logging: [
     { method: 'PUT', path: '/api/wireguard/client/:id/logging', desc: 'Enable/disable per-peer connection metadata logging. Body: { loggingEnabled: bool }.' },
@@ -219,9 +220,9 @@ curl -b cookies.txt http://localhost:51821/api/wireguard/client</pre>
               <p>Two backends run when at least one peer has <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">loggingEnabled = true</code>:</p>
               <ul class="list-disc pl-5 space-y-1.5">
                 <li><code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">conntrack -E -e NEW</code> — emits a <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">connection</code> event for each new TCP/UDP flow with src/dst IP and ports.</li>
-                <li><code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">tshark</code> on <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">wg0</code> — emits <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">dns</code>, <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">tls</code>, or <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">http</code> events with extracted hostnames.</li>
+                <li><code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">tshark</code> — emits <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">dns</code>, <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">tls</code>, or <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">http</code> events with extracted hostnames. It reads an <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">NFLOG</code> group fed only with DNS queries and the first 8 KiB of each connection from logged peers, so bulk traffic never reaches it (fallback when NFLOG is unavailable: a BPF-filtered capture on <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">wg0</code>). Its dissection state is reset periodically, keeping memory flat.</li>
               </ul>
-              <p>Events are matched to a peer by source IP, deduped within a 30s window per (peer, host), and held in an in-memory ring buffer (~500 per peer). The SSE endpoint replays the buffer on connect, then streams new events live with a 20s keep-alive ping.</p>
+              <p>Events are matched to a peer by source IP, deduped within a 30s window per (peer, host), and held in an in-memory ring buffer (250 per peer). The SSE endpoint replays the buffer on connect (or only what was missed when the browser reconnects with <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">Last-Event-ID</code>), then streams new events live with a 20s keep-alive ping.</p>
               <pre class="rounded-lg bg-zinc-900 p-4 text-xs leading-relaxed text-zinc-100 overflow-x-auto"># Enable logging
 curl -b cookies.txt -X PUT http://localhost:51821/api/wireguard/client/CLIENT_ID/logging \
   -H "Content-Type: application/json" \
@@ -229,7 +230,7 @@ curl -b cookies.txt -X PUT http://localhost:51821/api/wireguard/client/CLIENT_ID
 
 # Stream events
 curl -N -b cookies.txt http://localhost:51821/api/wireguard/client/CLIENT_ID/log/stream</pre>
-              <p class="text-xs">Requires <code class="rounded bg-muted px-1 py-0.5 text-[11px] text-foreground">conntrack-tools</code> and <code class="rounded bg-muted px-1 py-0.5 text-[11px] text-foreground">tshark</code> on the host (both are in the bundled Dockerfile).</p>
+              <p class="text-xs">Requires <code class="rounded bg-muted px-1 py-0.5 text-[11px] text-foreground">conntrack-tools</code>, <code class="rounded bg-muted px-1 py-0.5 text-[11px] text-foreground">tshark</code> and <code class="rounded bg-muted px-1 py-0.5 text-[11px] text-foreground">tcpdump</code> (reads the NFLOG group for tshark) on the host (all in the bundled Dockerfile).</p>
               <p class="text-xs">A 30-second supervisor watches both processes and respawns them if they exit while at least one peer still has logging enabled, so a transient capture crash recovers without manual intervention. The dashboard log dialog also shows a live status dot (green = streaming, amber = reconnecting, red = disconnected) and a "Reconnect" link to re-establish the SSE.</p>
               <p class="text-xs">Timestamps in the log and the connection history are formatted in the per-config <code class="rounded bg-muted px-1 py-0.5 text-[11px] text-foreground">schedule.timezone</code>. Change it from the schedule editor (the "TZ" chip on the detail page is a shortcut).</p>
             </CardContent>
@@ -246,10 +247,10 @@ curl -N -b cookies.txt http://localhost:51821/api/wireguard/client/CLIENT_ID/log
               </p>
               <ul class="list-disc pl-5 space-y-1.5">
                 <li>An HTB class on <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">wg0</code> egress with <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">rate=ceil=Nmbit</code> matched on the peer's tunnel IP. This shapes server → client traffic (download for the client).</li>
-                <li>An ingress <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">police</code> filter on <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">wg0</code> matched on source IP that drops packets above the configured rate. This caps client → server traffic (upload).</li>
-                <li>An <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">sfq</code> child qdisc per class for fair queuing inside the limit.</li>
+                <li>An ingress redirect of the peer's packets to the <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">wg0ifb</code> device, where a second HTB class shapes client → server traffic (upload) the same way. Kernels without IFB fall back to an ingress <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">police</code> filter that drops packets above the rate.</li>
+                <li>An <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">fq_codel</code> child qdisc per class (or <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">sfq</code> when fq_codel is missing) for fair, low-latency queuing inside the limit.</li>
               </ul>
-              <p>Rules are reapplied on every save and on the schedule ticker, so they follow enable/schedule/limit changes. Setting <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">bandwidthLimit = 0</code> removes the cap on the next save.</p>
+              <p>The rule set is rebuilt only when it actually changes (a limit, peer, enable flag or schedule window), so active limits are not reset by the schedule ticker. Setting <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">bandwidthLimit = 0</code> removes the cap immediately.</p>
               <p class="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-300">
                 Requires <code class="rounded bg-background/40 px-1 py-0.5 text-[11px]">tc</code> on the host
                 (<code class="rounded bg-background/40 px-1 py-0.5 text-[11px]">iproute2-tc</code> on Alpine, included in the bundled Dockerfile). Without it the API still accepts the value but rules silently won't apply.
@@ -266,12 +267,14 @@ curl -N -b cookies.txt http://localhost:51821/api/wireguard/client/CLIENT_ID/log
               <CardDescription>Per-peer content blocking via iptables string match.</CardDescription>
             </CardHeader>
             <CardContent class="space-y-3 text-sm text-muted-foreground">
-              <p>Each pattern is converted to a substring fed to <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">iptables -m string --algo bm --string "&lt;sub&gt;"</code>. The kernel rejects packets that contain that substring on:</p>
+              <p>Each pattern is converted to a substring fed to <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">iptables -m string --algo bm --icase --string "&lt;sub&gt;"</code>. The kernel rejects packets that contain that substring on:</p>
               <ul class="list-disc pl-5 space-y-1">
                 <li><strong>TCP port 443</strong> (TLS Client Hello → SNI byte-string), <code>REJECT</code> with TCP reset</li>
                 <li><strong>TCP port 80</strong> (HTTP <code>Host:</code> header), <code>REJECT</code> with TCP reset</li>
-                <li><strong>UDP / TCP port 53</strong> (DNS query payload), <code>DROP</code> / <code>REJECT</code></li>
+                <li><strong>UDP / TCP port 53</strong> (DNS query, matched in DNS wire format — <code>youtube.com</code> is searched as <code>youtube\x03com</code>), <code>DROP</code> / <code>REJECT</code></li>
+                <li><strong>UDP port 443</strong> (QUIC / HTTP/3, whose SNI is encrypted) is rejected outright for peers with a non-empty list, so clients fall back to TLS over TCP</li>
               </ul>
+              <p>The web rules only inspect the first 16 KiB of each connection (where SNI and Host live), so large transfers are not payload-scanned packet by packet. The whole chain is replaced atomically with <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">iptables-restore</code> when the list changes.</p>
               <p>Pattern semantics:</p>
               <ul class="list-disc pl-5 space-y-1">
                 <li><code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground">youtube.com</code> blocks <code>youtube.com</code> AND any subdomain (because the SNI/Host bytes contain that substring).</li>
@@ -471,14 +474,15 @@ curl -b cookies.txt \
                       <tr><td class="px-3 py-2 font-mono text-xs">scheduleActive</td><td class="px-3 py-2 text-muted-foreground">boolean</td><td class="px-3 py-2 text-muted-foreground">True if schedule allows the peer right now.</td></tr>
                       <tr><td class="px-3 py-2 font-mono text-xs">maxDevices</td><td class="px-3 py-2 text-muted-foreground">int (0–99)</td><td class="px-3 py-2 text-muted-foreground">Max concurrent devices; 0 disables the limit.</td></tr>
                       <tr><td class="px-3 py-2 font-mono text-xs">activeDeviceCount</td><td class="px-3 py-2 text-muted-foreground">int</td><td class="px-3 py-2 text-muted-foreground">Distinct endpoints currently tracked.</td></tr>
-                      <tr><td class="px-3 py-2 font-mono text-xs">deviceLimitExceededAt</td><td class="px-3 py-2 text-muted-foreground">datetime|null</td><td class="px-3 py-2 text-muted-foreground">When the peer was last auto-disabled by the limit.</td></tr>
+                      <tr><td class="px-3 py-2 font-mono text-xs">deviceLimitExceededAt</td><td class="px-3 py-2 text-muted-foreground">datetime|null</td><td class="px-3 py-2 text-muted-foreground">When more than <code>maxDevices</code> endpoints were last seen (informational; the peer stays enabled).</td></tr>
                       <tr><td class="px-3 py-2 font-mono text-xs">bandwidthLimit</td><td class="px-3 py-2 text-muted-foreground">int (0–10000)</td><td class="px-3 py-2 text-muted-foreground">Per-peer bandwidth cap in Mbps; 0 = unlimited.</td></tr>
                       <tr><td class="px-3 py-2 font-mono text-xs">loggingEnabled</td><td class="px-3 py-2 text-muted-foreground">boolean</td><td class="px-3 py-2 text-muted-foreground">When true, log connection metadata for this peer.</td></tr>
                       <tr><td class="px-3 py-2 font-mono text-xs">logRetentionDays</td><td class="px-3 py-2 text-muted-foreground">int (0–365)</td><td class="px-3 py-2 text-muted-foreground">Days to keep log events on disk; 0 = memory only.</td></tr>
-                      <tr><td class="px-3 py-2 font-mono text-xs">logBufferSize</td><td class="px-3 py-2 text-muted-foreground">int</td><td class="px-3 py-2 text-muted-foreground">Number of recent events held in the in-memory ring (max ~500).</td></tr>
+                      <tr><td class="px-3 py-2 font-mono text-xs">logBufferSize</td><td class="px-3 py-2 text-muted-foreground">int</td><td class="px-3 py-2 text-muted-foreground">Number of recent events held in the in-memory ring (max 250).</td></tr>
                       <tr><td class="px-3 py-2 font-mono text-xs">allowedSourceIps</td><td class="px-3 py-2 text-muted-foreground">string[]</td><td class="px-3 py-2 text-muted-foreground">IPv4 / CIDR allow-list. Empty = no restriction.</td></tr>
                       <tr><td class="px-3 py-2 font-mono text-xs">sourceIpDeniedAt</td><td class="px-3 py-2 text-muted-foreground">datetime|null</td><td class="px-3 py-2 text-muted-foreground">Last time the peer was auto-disabled by the IP allow-list.</td></tr>
                       <tr><td class="px-3 py-2 font-mono text-xs">blockedDomains</td><td class="px-3 py-2 text-muted-foreground">string[]</td><td class="px-3 py-2 text-muted-foreground">Domain patterns blocked at SNI/Host/DNS layer.</td></tr>
+                      <tr><td class="px-3 py-2 font-mono text-xs">endpoint</td><td class="px-3 py-2 text-muted-foreground">string|null</td><td class="px-3 py-2 text-muted-foreground">Current public <code>ip:port</code> of the peer, from <code>wg show</code>.</td></tr>
                       <tr><td class="px-3 py-2 font-mono text-xs">latestHandshakeAt</td><td class="px-3 py-2 text-muted-foreground">datetime|null</td><td class="px-3 py-2 text-muted-foreground">Last handshake timestamp.</td></tr>
                       <tr><td class="px-3 py-2 font-mono text-xs">transferRx, transferTx</td><td class="px-3 py-2 text-muted-foreground">int|null</td><td class="px-3 py-2 text-muted-foreground">Cumulative bytes.</td></tr>
                     </tbody>

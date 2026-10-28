@@ -32,3 +32,13 @@ services:
     sysctls:
       - net.ipv4.ip_forward=1
       - net.ipv4.conf.all.src_valid_mark=1
+    # Hosts without the WireGuard kernel module (OpenVZ / LXC VPS) use the
+    # bundled userspace wireguard-go, which needs the TUN device:
+    # devices:
+    #   - /dev/net/tun
+    # Keep container logs from slowly filling a small disk.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

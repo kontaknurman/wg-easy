@@ -33,7 +33,8 @@ const isOnline = computed(() => {
 const scheduleEnabled = computed(() => props.client.schedule?.enabled);
 const scheduleActive = computed(() => props.client.scheduleActive !== false);
 const deviceLimitOn = computed(() => (props.client.maxDevices || 0) > 0);
-const deviceLimitTripped = computed(() => !!props.client.deviceLimitExceededAt && !props.client.enabled);
+// Informational flag: the device limit never disables the peer.
+const deviceLimitTripped = computed(() => !!props.client.deviceLimitExceededAt);
 const bandwidthLimitOn = computed(() => (props.client.bandwidthLimit || 0) > 0);
 const loggingOn = computed(() => !!props.client.loggingEnabled);
 const sourceIpRestrictOn = computed(() => Array.isArray(props.client.allowedSourceIps) && props.client.allowedSourceIps.length > 0);
@@ -111,9 +112,9 @@ async function toggleEnabled(value) {
               <HugeiconsIcon :icon="Edit02Icon" :size="13" :stroke-width="2" />
             </button>
           </template>
-          <Badge v-if="!client.enabled" variant="secondary" class="shrink-0">Disabled</Badge>
+          <Badge v-if="sourceIpDenied" variant="destructive" class="shrink-0">IP denied</Badge>
+          <Badge v-else-if="!client.enabled" variant="secondary" class="shrink-0">Disabled</Badge>
           <Badge v-else-if="scheduleEnabled && !scheduleActive" variant="warning" class="shrink-0">Off-hours</Badge>
-          <Badge v-else-if="sourceIpDenied" variant="destructive" class="shrink-0">IP denied</Badge>
           <Badge v-else-if="deviceLimitTripped" variant="warning" class="shrink-0">Multi-device</Badge>
           <Badge v-else-if="scheduleEnabled && scheduleActive" variant="success" class="shrink-0">Scheduled</Badge>
           <Badge v-if="deviceLimitOn" variant="outline" class="shrink-0">

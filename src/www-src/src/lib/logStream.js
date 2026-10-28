@@ -23,6 +23,11 @@ function makeStore(clientId) {
   const streamState = ref('idle'); // 'idle' | 'connecting' | 'open' | 'reconnecting' | 'failed'
   let evtSource = null;
   let refCount = 0;
+  // Server event ids are "<boot>-<seq>". The browser sends the last one back
+  // when it reconnects on its own, so the server only replays what we
+  // missed; tracking it here also drops anything we already have.
+  let lastBoot = null;
+  let lastSeq = 0;
 
   function open() {
     close();
@@ -35,8 +40,16 @@ function makeStore(clientId) {
     evtSource.onopen = () => { streamState.value = 'open'; };
     evtSource.onmessage = (e) => {
       streamState.value = 'open';
+      const m = /^([0-9a-f]+)-(\d+)$/.exec(e.lastEventId || '');
+      if (m) {
+        const seq = Number(m[2]);
+        if (m[1] === lastBoot && seq <= lastSeq) return;
+        lastBoot = m[1];
+        lastSeq = seq;
+      }
       try {
         const ev = JSON.parse(e.data);
+        if (e.lastEventId) ev._id = e.lastEventId;
         events.value.push(ev);
         if (events.value.length > LIVE_CAP) {
           events.value.splice(0, events.value.length - LIVE_CAP);
@@ -59,6 +72,8 @@ function makeStore(clientId) {
 
   function reconnect() {
     events.value = [];
+    lastBoot = null;
+    lastSeq = 0;
     open();
   }
 

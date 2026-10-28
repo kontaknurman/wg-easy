@@ -72,6 +72,49 @@ function ipMatchesCidrList(ip, cidrList) {
   return false;
 }
 
+// Parse a CIDR list once so hot paths (per-request IP gate) only do integer
+// math instead of re-parsing every string on every request.
+function compileCidrList(cidrList) {
+  if (!Array.isArray(cidrList)) return [];
+  const compiled = [];
+  for (const cidr of cidrList) {
+    const m = parseCidr(cidr);
+    if (m) compiled.push({ networkInt: m.networkInt, maskInt: m.maskInt });
+  }
+  return compiled;
+}
+
+function ipMatchesCompiled(ip, compiled) {
+  if (!compiled || compiled.length === 0) return false;
+  const epInt = ipv4ToInt(ip);
+  if (epInt === null) return false;
+  for (const m of compiled) {
+    // eslint-disable-next-line no-bitwise
+    if (((epInt & m.maskInt) >>> 0) === m.networkInt) return true;
+  }
+  return false;
+}
+
+const PRIVATE_IPV4 = compileCidrList([
+  '10.0.0.0/8',
+  '172.16.0.0/12',
+  '192.168.0.0/16',
+  '127.0.0.0/8',
+  '169.254.0.0/16',
+  '100.64.0.0/10',
+]);
+
+// Loopback / private / link-local / CGNAT (IPv4) and loopback / ULA /
+// link-local (IPv6).
+function isPrivateAddress(ip) {
+  if (typeof ip !== 'string' || !ip) return false;
+  if (ip.includes(':')) {
+    const v = ip.toLowerCase();
+    return v === '::1' || /^f[cd]/.test(v) || /^fe[89ab]/.test(v);
+  }
+  return ipMatchesCompiled(ip, PRIVATE_IPV4);
+}
+
 // Same as ipMatchesCidrList but for the "endpoint" form ("ip:port") used by
 // `wg show wg0 dump` and treats empty input / IPv6 / unparseable as a match
 // (fail-open). This preserves the existing per-peer source-IP behaviour.
@@ -95,5 +138,8 @@ module.exports = {
   ipv4ToInt,
   normalizeCidrList,
   ipMatchesCidrList,
+  compileCidrList,
+  ipMatchesCompiled,
+  isPrivateAddress,
   endpointMatchesAllowList,
 };

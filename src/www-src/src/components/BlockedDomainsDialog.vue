@@ -78,7 +78,7 @@ function save() {
         </DialogTitle>
         <DialogDescription v-if="client">
           Drop traffic for <span class="font-medium text-foreground">{{ client.name }}</span> that targets the listed
-          domains. Enforced via iptables string match on TLS SNI / HTTP Host / DNS payload.
+          domains. Enforced via iptables string match on TLS SNI / HTTP Host / DNS queries (case-insensitive).
         </DialogDescription>
       </DialogHeader>
 
@@ -118,6 +118,8 @@ function save() {
         <div class="flex items-start gap-3 rounded-lg border bg-muted/40 p-3 text-xs text-muted-foreground">
           <HugeiconsIcon :icon="AlertCircleIcon" :size="16" :stroke-width="2" class="mt-0.5 shrink-0" />
           <p>
+            QUIC / HTTP/3 (UDP 443) is rejected for this peer while the list is non-empty, so browsers and apps
+            fall back to TLS over TCP where the hostname is visible.
             <strong>Limitations:</strong> DoH / DoT (encrypted DNS), TLS Encrypted ClientHello, and direct-to-IP
             traffic bypass this filter. Substring matching can also produce false positives — e.g. blocking
             <code>example</code> would also catch <code>noexample.com</code>.

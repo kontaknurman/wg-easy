@@ -68,7 +68,7 @@ function save() {
           Device limit
         </DialogTitle>
         <DialogDescription v-if="client">
-          Auto-disable <span class="font-medium text-foreground">{{ client.name }}</span> if more than the allowed number of distinct devices use this config concurrently.
+          Flag <span class="font-medium text-foreground">{{ client.name }}</span> when more than the allowed number of distinct devices use this config concurrently.
         </DialogDescription>
       </DialogHeader>
 

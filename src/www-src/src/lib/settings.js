@@ -15,14 +15,17 @@ const DEFAULTS = {
 
 export const settings = reactive({ ...DEFAULTS });
 
+// Resolves to true once the store holds what the server returned.
 export async function loadSettings() {
   try {
     const fresh = await api.getSettings();
     Object.assign(settings, { ...DEFAULTS, ...fresh });
+    return true;
   } catch (err) {
     // keep defaults silently — settings endpoint is public so failure is unusual
     // eslint-disable-next-line no-console
     console.warn('settings load failed', err && err.message);
+    return false;
   }
 }
 

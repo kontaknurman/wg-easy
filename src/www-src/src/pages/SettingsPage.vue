@@ -1,9 +1,9 @@
 <script setup>
 import {
-  ref, reactive, watch, inject, computed, onMounted,
+  ref, reactive, inject, computed, onMounted,
 } from 'vue';
 import { useRouter } from 'vue-router';
-import { saveSettings } from '@/lib/settings';
+import { loadSettings, saveSettings } from '@/lib/settings';
 import { api } from '@/api/client';
 import { toast, toastError } from '@/lib/toast';
 import AppHeader from '@/components/AppHeader.vue';
@@ -27,6 +27,9 @@ import {
 const settings = inject('settings');
 const router = useRouter();
 const submitting = ref(false);
+// Saving is only allowed once the form shows the server's values; saving the
+// placeholder defaults would silently wipe e.g. the API allow-list.
+const loaded = ref(false);
 const myIp = ref(null);
 
 const form = reactive({
@@ -96,9 +99,17 @@ function syncFromStore() {
   form.trustProxyHeader = settings.trustProxyHeader || 'auto';
 }
 
-watch(() => settings.siteName, syncFromStore, { immediate: true });
+syncFromStore();
 
 onMounted(async () => {
+  // The shared store may still hold defaults (page opened directly) or the
+  // public subset loaded before login: always fetch the full settings first.
+  if (await loadSettings()) {
+    syncFromStore();
+    loaded.value = true;
+  } else {
+    toastError(new Error('Could not load the current settings. Reload the page to try again.'));
+  }
   try {
     myIp.value = await api.getMyIp();
   } catch { /* ignore */ }
@@ -134,6 +145,7 @@ async function submit() {
   submitting.value = true;
   try {
     await saveSettings({ ...form, apiAllowedIps: form.apiAllowedIps.slice() });
+    syncFromStore();
     toast({ title: 'Settings saved', description: 'Panel updated.' });
   } catch (err) {
     toastError(err);
@@ -321,7 +333,7 @@ function reset() {
             <HugeiconsIcon :icon="RefreshIcon" :size="16" :stroke-width="2" />
             Reset
           </Button>
-          <Button type="submit" :disabled="submitting || !form.siteName.trim()">
+          <Button type="submit" :disabled="submitting || !loaded || !form.siteName.trim()">
             <HugeiconsIcon :icon="CheckmarkCircle02Icon" :size="16" :stroke-width="2" />
             {{ submitting ? 'Saving…' : 'Save settings' }}
           </Button>

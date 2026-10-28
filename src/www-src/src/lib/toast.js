@@ -18,6 +18,8 @@ export function dismissToast(id) {
 }
 
 export function toastError(err) {
+  // Expired session: the app redirects to the login page instead.
+  if (err && err.unauthorized) return;
   toast({
     title: 'Error',
     description: (err && (err.message || err.toString())) || 'Something went wrong',

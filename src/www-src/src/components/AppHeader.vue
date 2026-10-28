@@ -1,6 +1,6 @@
 <script setup>
 import { useRouter } from 'vue-router';
-import { ref, onMounted, watch, inject } from 'vue';
+import { ref, watch, inject } from 'vue';
 import Button from '@/components/ui/Button.vue';
 import { HugeiconsIcon } from '@hugeicons/vue';
 import {
@@ -14,15 +14,11 @@ const emit = defineEmits(['logged-out']);
 const router = useRouter();
 const settings = inject('settings');
 
-const dark = ref(false);
-onMounted(() => {
-  const saved = localStorage.getItem('theme');
-  dark.value = saved ? saved === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches;
-  document.documentElement.classList.toggle('dark', dark.value);
-});
+// index.html applies the theme before the first paint; mirror it here.
+const dark = ref(document.documentElement.classList.contains('dark'));
 watch(dark, (v) => {
   document.documentElement.classList.toggle('dark', v);
-  localStorage.setItem('theme', v ? 'dark' : 'light');
+  try { localStorage.setItem('theme', v ? 'dark' : 'light'); } catch { /* storage unavailable */ }
 });
 
 async function logout() {

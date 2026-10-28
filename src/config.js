@@ -17,13 +17,23 @@ module.exports.WG_DEFAULT_DNS = typeof process.env.WG_DEFAULT_DNS === 'string'
   : '1.1.1.1';
 module.exports.WG_ALLOWED_IPS = process.env.WG_ALLOWED_IPS || '0.0.0.0/0, ::/0';
 
+// Default firewall rules. Each one is checked (-C) before being added so a
+// restart inside the same network namespace never stacks duplicates, and the
+// default PostDown removes exactly what PostUp added.
+const DEFAULT_RULES = [
+  ['nat', 'POSTROUTING', `-s ${module.exports.WG_DEFAULT_ADDRESS.replace('x', '0')}/24 -o ${module.exports.WG_DEVICE} -j MASQUERADE`],
+  [null, 'INPUT', '-p udp -m udp --dport 51820 -j ACCEPT'],
+  [null, 'FORWARD', '-i wg0 -j ACCEPT'],
+  [null, 'FORWARD', '-o wg0 -j ACCEPT'],
+];
+const iptablesCmd = (table, action, chain, spec) => `iptables ${table ? `-t ${table} ` : ''}${action} ${chain} ${spec}`;
+
 module.exports.WG_PRE_UP = process.env.WG_PRE_UP || '';
-module.exports.WG_POST_UP = process.env.WG_POST_UP || `
-iptables -t nat -A POSTROUTING -s ${module.exports.WG_DEFAULT_ADDRESS.replace('x', '0')}/24 -o ${module.exports.WG_DEVICE} -j MASQUERADE;
-iptables -A INPUT -p udp -m udp --dport 51820 -j ACCEPT;
-iptables -A FORWARD -i wg0 -j ACCEPT;
-iptables -A FORWARD -o wg0 -j ACCEPT;
-`.split('\n').join(' ');
+module.exports.WG_POST_UP = process.env.WG_POST_UP || DEFAULT_RULES
+  .map(([table, chain, spec]) => `${iptablesCmd(table, '-C', chain, spec)} 2>/dev/null || ${iptablesCmd(table, '-A', chain, spec)};`)
+  .join(' ');
 
 module.exports.WG_PRE_DOWN = process.env.WG_PRE_DOWN || '';
-module.exports.WG_POST_DOWN = process.env.WG_POST_DOWN || '';
+module.exports.WG_POST_DOWN = process.env.WG_POST_DOWN || DEFAULT_RULES
+  .map(([table, chain, spec]) => `${iptablesCmd(table, '-D', chain, spec)} 2>/dev/null || true;`)
+  .join(' ');
